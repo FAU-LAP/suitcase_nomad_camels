@@ -12,6 +12,9 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+## 0.2.1
+Fixed bug with fits
+
 ## 0.2.0
 Features:
 - Added virtual datasets of measured data in instruments, resembling the NeXus standard more closely.

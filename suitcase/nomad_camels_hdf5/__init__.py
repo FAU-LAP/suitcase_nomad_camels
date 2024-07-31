@@ -574,6 +574,8 @@ class Serializer(event_model.DocumentRouter):
         # then route them through here.
         super().event_page(doc)
         stream_group = self._stream_groups.get(doc["descriptor"], None)
+        if stream_group is None:
+            return
         if self._current_stream != doc["descriptor"]:
             self._current_stream = doc["descriptor"]
             self._stream_counter.append([doc["descriptor"], 1])
