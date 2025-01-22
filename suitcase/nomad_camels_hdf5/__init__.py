@@ -776,12 +776,12 @@ class Serializer(event_model.DocumentRouter):
     def _add_data_to_stream_group(
         self, metadata, stream_group, ep_data_array, ep_data_key
     ):
+        if str(ep_data_array.dtype).startswith("<U"):
+            ep_data_array = ep_data_array.astype(bytes)
         if ep_data_key not in stream_group.keys():
             if any(dim <= 0 for dim in ep_data_array.shape):
                 print(f"Skipping {ep_data_key} because of shape {ep_data_array.shape}")
                 return
-            if str(ep_data_array.dtype).startswith("<U"):
-                ep_data_array = ep_data_array.astype(bytes)
             stream_group.create_dataset(
                 data=ep_data_array,
                 name=ep_data_key,
