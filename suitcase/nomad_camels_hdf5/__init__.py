@@ -719,10 +719,14 @@ class Serializer(event_model.DocumentRouter):
             self._stream_counter.append([doc["descriptor"], 1])
         else:
             self._stream_counter[-1][1] += 1
-        self._stream_counter
-        # time = np.asarray([timestamp_to_ISO8601(doc["time"][0])])
-        time = np.asarray([doc["time"][0]])
-        since = np.asarray([doc["time"][0] - self._start_time])
+        if len(doc["time"]) == 1:
+            time = np.asarray([doc["time"][0]])
+            since = np.asarray([doc["time"][0] - self._start_time])
+        else:
+            for k in doc["timestamps"]:
+                time = np.asarray(doc["timestamps"][k])
+                since = time - self._start_time
+                break
         if "time" not in stream_group.keys():
             stream_group.create_dataset(
                 name="time", data=time, chunks=(1,), maxshape=(None,)
