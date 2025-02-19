@@ -494,6 +494,7 @@ class Serializer(event_model.DocumentRouter):
             entry_name=entry_name, relative_file_path=relative_path, mode="a"
         )
         i = 1
+        self._h5_output_file.attrs["file_type"] = "NOMAD CAMELS"
         self._h5_output_file.attrs["NX_class"] = "NXroot"
         entry_name = "CAMELS_" + entry_name
         while entry_name in self._h5_output_file:
