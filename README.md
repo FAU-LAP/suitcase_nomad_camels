@@ -11,6 +11,10 @@ pip install suitcase-nomad-camels-hdf5
 
 
 # Changelog
+### 0.4.5
+Fixes:
+- events with more than one reading can now also be processed (e.g. for flyers)
+
 ### 0.4.4
 Fixes:
 - strings could only be saved once, now fixed
