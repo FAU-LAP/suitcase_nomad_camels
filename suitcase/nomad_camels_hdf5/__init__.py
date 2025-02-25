@@ -712,8 +712,13 @@ class Serializer(event_model.DocumentRouter):
         elif stream_group == "_live_metadata_reading_":
             # take the single entries from the metadata and write them in the info
             meas_group = self._entry["measurement_details"]
-            for info in doc["data"]["live_metadata"][0]._fields:
-                meas_group[info] = doc["data"]["live_metadata"][0]._asdict()[info]
+            live_metadata = doc["data"]["live_metadata"][0]
+            if hasattr(live_metadata, "_fields"):
+                for info in live_metadata._fields:
+                    meas_group[info] = live_metadata._asdict()[info]
+            elif isinstance(live_metadata, dict):
+                for info, value in live_metadata.items():
+                    meas_group[info] = value
             return
         if self._current_stream != doc["descriptor"]:
             self._current_stream = doc["descriptor"]
@@ -767,7 +772,10 @@ class Serializer(event_model.DocumentRouter):
                 # make one dataset for each variable in the variable signal
                 for i, var in enumerate(metadata["variables"]):
                     # get the data for the variable
-                    var_data = np.asarray([ep_data_list[0][i]])
+                    try:
+                        var_data = np.asarray([ep_data_list[0][i]])
+                    except KeyError:
+                        var_data = np.asarray([ep_data_list[0][var]])
                     self._add_data_to_stream_group(metadata, sub_group, var_data, var)
                 continue
             ep_data_array = np.asarray(ep_data_list)

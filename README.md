@@ -11,6 +11,13 @@ pip install suitcase-nomad-camels-hdf5
 
 
 # Changelog
+
+### 0.4.6
+
+Changes:
+
+- variable signals now return dictionaries and not namedtuples (for NOMAD CAMELS starting with version 1.8.0). CAMELS suitcase can now handle these changes.
+
 ### 0.4.5
 Fixes:
 - events with more than one reading can now also be processed (e.g. for flyers)
