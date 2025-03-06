@@ -260,12 +260,13 @@ class FileManager:
     This design is inspired by Python's zipfile and tarfile libraries.
     """
 
-    def __init__(self, directory, new_file_each=True):
+    def __init__(self, directory, new_file_each=True, file_extension=None):
         self.directory = Path(directory)
         self._reserved_names = set()
         self._artifacts = collections.defaultdict(list)
         self._new_file_each = new_file_each
         self._files = dict()
+        self.file_extension = file_extension
 
     @property
     def artifacts(self):
@@ -287,9 +288,9 @@ class FileManager:
         ):
             entry_name_non_iso = clean_filename(entry_name)
             abs_file_path = abs_file_path.as_posix()
-            if not abs_file_path.endswith(f"{entry_name_non_iso}.nxs"):
+            if not abs_file_path.endswith(f"{entry_name_non_iso}{self.file_extension}"):
                 abs_file_path = (
-                    os.path.splitext(abs_file_path)[0] + f"_{entry_name_non_iso}.nxs"
+                    os.path.splitext(abs_file_path)[0] + f"_{entry_name_non_iso}{self.file_extension}"
                 )
         i = 1
         while (
@@ -297,10 +298,10 @@ class FileManager:
             or os.path.isfile(abs_file_path)
             and self._new_file_each
         ):
-            if abs_file_path.endswith(f"_{i-1}.nxs"):
-                abs_file_path = abs_file_path.replace(f"_{i-1}.nxs", f"_{i}.nxs")
+            if abs_file_path.endswith(f"_{i-1}{self.file_extension}"):
+                abs_file_path = abs_file_path.replace(f"_{i-1}{self.file_extension}", f"_{i}{self.file_extension}")
             else:
-                abs_file_path = os.path.splitext(abs_file_path)[0] + f"_{i}.nxs"
+                abs_file_path = os.path.splitext(abs_file_path)[0] + f"_{i}{self.file_extension}"
             i += 1
         self._reserved_names.add(abs_file_path)
         self._artifacts[entry_name].append(abs_file_path)
@@ -391,12 +392,17 @@ class Serializer(event_model.DocumentRouter):
         self._entry_name = ""
         self.do_nexus_output = do_nexus_output
 
+        if self.do_nexus_output:
+            self.file_extension = ".nxs"
+        else:
+            self.file_extension = ".h5"
+
         if isinstance(directory, (str, Path)):
             # The user has given us a filepath; they want files.
             # Set up a MultiFileManager for them.
             directory = Path(directory)
             self._manager = FileManager(
-                directory=directory, new_file_each=new_file_each
+                directory=directory, new_file_each=new_file_each, file_extension=self.file_extension
             )
         else:
             # The user has given us their own Manager instance. Use that.
@@ -479,10 +485,10 @@ class Serializer(event_model.DocumentRouter):
         # if isinstance(doc, databroker.core.Start):
         doc = dict(doc)  # convert to dict or make a copy
         self._templated_file_prefix = self._file_prefix.format(**doc)
-        if self._templated_file_prefix.endswith(".nxs"):
+        if self._templated_file_prefix.endswith(self.file_extension):
             relative_path = Path(self._templated_file_prefix)
         else:
-            relative_path = Path(f"{self._templated_file_prefix}.nxs")
+            relative_path = Path(f"{self._templated_file_prefix}{self.file_extension}")
         entry_name = "entry"
         if "session_name" in doc and doc["session_name"]:
             entry_name = doc["session_name"]
@@ -506,7 +512,7 @@ class Serializer(event_model.DocumentRouter):
         self._entry_name = entry_name
         entry = self._h5_output_file.create_group(entry_name)
         self._entry = entry
-        entry.attrs["NX_class"] = "NXentry"
+        entry.attrs["NX_class"] = "NXcollection"
         # entry.attrs['NX_class'] = "NXcollection"
         # entry["definition"] = "NXsensor_scan"
         if "versions" in doc and set(doc["versions"].keys()) == {
