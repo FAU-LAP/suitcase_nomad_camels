@@ -12,6 +12,12 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 0.4.7
+
+Changes:
+
+- Now uses the dynamic file extensions coming from CAMELS (either `.h5` or `.nxs`) to save the data. Works with NOMAD CAMELS >= 1.8.0
+
 ### 0.4.6
 
 Changes:
