@@ -267,6 +267,7 @@ class FileManager:
         self._new_file_each = new_file_each
         self._files = dict()
         self.file_extension = file_extension
+        self._last_file_settings = None
 
     @property
     def artifacts(self):
@@ -290,7 +291,8 @@ class FileManager:
             abs_file_path = abs_file_path.as_posix()
             if not abs_file_path.endswith(f"{entry_name_non_iso}{self.file_extension}"):
                 abs_file_path = (
-                    os.path.splitext(abs_file_path)[0] + f"_{entry_name_non_iso}{self.file_extension}"
+                    os.path.splitext(abs_file_path)[0]
+                    + f"_{entry_name_non_iso}{self.file_extension}"
                 )
         i = 1
         while (
@@ -299,9 +301,13 @@ class FileManager:
             and self._new_file_each
         ):
             if abs_file_path.endswith(f"_{i-1}{self.file_extension}"):
-                abs_file_path = abs_file_path.replace(f"_{i-1}{self.file_extension}", f"_{i}{self.file_extension}")
+                abs_file_path = abs_file_path.replace(
+                    f"_{i-1}{self.file_extension}", f"_{i}{self.file_extension}"
+                )
             else:
-                abs_file_path = os.path.splitext(abs_file_path)[0] + f"_{i}{self.file_extension}"
+                abs_file_path = (
+                    os.path.splitext(abs_file_path)[0] + f"_{i}{self.file_extension}"
+                )
             i += 1
         self._reserved_names.add(abs_file_path)
         self._artifacts[entry_name].append(abs_file_path)
@@ -311,7 +317,26 @@ class FileManager:
         abs_file_path = self.reserve_name(entry_name, relative_file_path)
         os.makedirs(os.path.dirname(abs_file_path), exist_ok=True)
         f = h5py.File(abs_file_path, mode=mode, **open_file_kwargs)
+        self._last_file_settings = {
+            "name": abs_file_path,
+            "mode": mode,
+        }
+        self._last_file_settings.update(open_file_kwargs)
         self._files[abs_file_path] = f
+        return f
+
+    def get_last_file(self):
+        """
+        Returns the last file opened by the manager.
+        """
+        if self._last_file_settings is None:
+            raise ValueError(
+                "The last file settings are not available. No file was opened before."
+            )
+        if self._last_file_settings["name"] in self._files:
+            return self._files[self._last_file_settings["name"]]
+        f = h5py.File(**self._last_file_settings)
+        self._files[self._last_file_settings["name"]] = f
         return f
 
     def close(self):
@@ -320,6 +345,13 @@ class FileManager:
         """
         for filepath, f in self._files.items():
             f.close()
+        self._files.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception_details):
+        self.close()
 
 
 class Serializer(event_model.DocumentRouter):
@@ -385,12 +417,14 @@ class Serializer(event_model.DocumentRouter):
         self._plot_data = plot_data or []
         self._start_time = 0
         self._channel_links = {}
+        self._channel_paths = {}
         self._channels_in_streams = {}
         self._stream_counter = []
         self._current_stream = None
         self._channel_metadata = {}
         self._entry_name = ""
         self.do_nexus_output = do_nexus_output
+        self._last_event_timestamp = None
 
         if self.do_nexus_output:
             self.file_extension = ".nxs"
@@ -402,7 +436,9 @@ class Serializer(event_model.DocumentRouter):
             # Set up a MultiFileManager for them.
             directory = Path(directory)
             self._manager = FileManager(
-                directory=directory, new_file_each=new_file_each, file_extension=self.file_extension
+                directory=directory,
+                new_file_each=new_file_each,
+                file_extension=self.file_extension,
             )
         else:
             # The user has given us their own Manager instance. Use that.
@@ -476,6 +512,22 @@ class Serializer(event_model.DocumentRouter):
     #   or
     #
     #   my_function(doc, file)
+    def ensure_open(self, include_channel_links=True):
+        # check whether the file is open and if not, open it again
+        if self._h5_output_file is None or not self._h5_output_file:
+            self._h5_output_file = self._manager.get_last_file()
+            self._entry = self._h5_output_file[self._entry_name]
+            self._data_entry = self._entry["data"]
+            for stream_name, stream_id in self._stream_names.items():
+                if stream_name in self._stream_groups:
+                    continue
+                if stream_name == "primary":
+                    self._stream_groups[stream_id] = self._data_entry
+                    continue
+                self._stream_groups[stream_id] = self._data_entry[stream_name]
+        if include_channel_links:
+            for ch, path in self._channel_paths.items():
+                self._channel_links[ch] = self._entry[path]
 
     def start(self, doc):
         # Fill in the file_prefix with the contents of the RunStart document.
@@ -495,6 +547,7 @@ class Serializer(event_model.DocumentRouter):
         start_time = doc["time"]
         start_time = timestamp_to_ISO8601(start_time)
         self._start_time = doc.pop("time")
+        self._last_event_timestamp = self._start_time
 
         self._h5_output_file = self._manager.open(
             entry_name=entry_name, relative_file_path=relative_path, mode="a"
@@ -619,15 +672,12 @@ class Serializer(event_model.DocumentRouter):
                 for ch, ch_dat in channel_dict.items():
                     is_output = ch_dat.pop("output")
                     ch_dat = dict(ch_dat)
+                    sensor_name = ch_dat.pop("name").split(".")[-1]
                     if is_output:
-                        sensor = output_group.create_group(
-                            ch_dat.pop("name").split(".")[-1]
-                        )
+                        sensor = output_group.create_group(sensor_name)
                         sensor.attrs["NX_class"] = "NXactuator"
                     else:
-                        sensor = sensor_group.create_group(
-                            ch_dat.pop("name").split(".")[-1]
-                        )
+                        sensor = sensor_group.create_group(sensor_name)
                         sensor.attrs["NX_class"] = "NXsensor"
                     sensor["name"] = ch
 
@@ -636,6 +686,14 @@ class Serializer(event_model.DocumentRouter):
                     self._channel_metadata[ch] = metadata
                     recourse_entry_dict(sensor, ch_dat)
                     self._channel_links[ch] = sensor
+                    self._channel_paths[ch] = "/".join(
+                        [
+                            "instruments",
+                            dev,
+                            "outputs" if is_output else "sensors",
+                            sensor_name,
+                        ]
+                    )
             fab_group = dev_group.create_group("fabrication")
             fab_group.attrs["NX_class"] = "NXfabrication"
             if "idn" in dat:
@@ -689,6 +747,7 @@ class Serializer(event_model.DocumentRouter):
 
     def descriptor(self, doc):
         super().descriptor(doc)
+        self.ensure_open(include_channel_links=False)
         stream_name = doc["name"]
         if "_fits_readying_" in stream_name:
             return
@@ -712,6 +771,18 @@ class Serializer(event_model.DocumentRouter):
         # DocumentRouter will convert this representations to 'event_page'
         # then route them through here.
         super().event_page(doc)
+        # check if events are coming fast, if so, don't close the file after writing, otherwise close it
+        if doc["time"][0] - self._last_event_timestamp > 1:
+            with self._manager as mgr:
+                self.ensure_open(include_channel_links=False)
+                self.handle_event_page(doc)
+        else:
+            self.ensure_open(include_channel_links=False)
+            self.handle_event_page(doc)
+            self._h5_output_file.flush()  # write buffer to file right away to prevent data loss
+        self._last_event_timestamp = doc["time"][0]
+
+    def handle_event_page(self, doc):
         stream_group = self._stream_groups.get(doc["descriptor"], None)
         if stream_group is None:
             return
@@ -821,124 +892,134 @@ class Serializer(event_model.DocumentRouter):
         return len(self._stream_groups[stream_id]["time"])
 
     def stop(self, doc):
-        super().stop(doc)
-        end_time = doc["time"]
-        end_time = timestamp_to_ISO8601(end_time)
-        self._entry["measurement_details"]["end_time"] = end_time
+        with self._manager as mgr:
+            self.ensure_open()
+            super().stop(doc)
+            end_time = doc["time"]
+            end_time = timestamp_to_ISO8601(end_time)
+            self._entry["measurement_details"]["end_time"] = end_time
 
-        for ch, stream_docs in self._channels_in_streams.items():
-            if ch not in self._channel_links:
-                continue
-            total_length = 0
-            sources = {}
-            sources_time = {}
-            dataset = None
-            for stream in stream_docs:
-                total_length += self.get_length_of_stream(stream)
-                dataset = self._stream_groups[stream][ch]
-                sources[stream] = h5py.VirtualSource(self._stream_groups[stream][ch])
-                sources_time[stream] = h5py.VirtualSource(
-                    self._stream_groups[stream]["time"]
-                )
-                dtype_time = self._stream_groups[stream]["time"].dtype
-            if dataset is None:
-                continue
-            shape = (total_length, *dataset.shape[1:])
-            layout = h5py.VirtualLayout(shape=shape, dtype=dataset.dtype)
-            layout_time = h5py.VirtualLayout(shape=(total_length,), dtype=dtype_time)
-            n = 0
-            counts_per_stream = {}
-            for stream, count in self._stream_counter:
-                if stream not in stream_docs:
+            for ch, stream_docs in self._channels_in_streams.items():
+                if ch not in self._channel_links:
                     continue
-                if stream not in counts_per_stream:
-                    counts_per_stream[stream] = 0
-                    n_stream = 0
-                else:
-                    n_stream = counts_per_stream[stream]
-                layout[n : n + count] = sources[stream][n_stream : n_stream + count]
-                layout_time[n : n + count] = sources_time[stream][
-                    n_stream : n_stream + count
-                ]
-                n += count
-                counts_per_stream[stream] += count
-            self._channel_links[ch].create_virtual_dataset("value_log", layout)
-            self._channel_links[ch].create_virtual_dataset("timestamps", layout_time)
-
-        stream_axes = {}
-        stream_signals = {}
-        for plot in self._plot_data:
-            if plot.stream_name in self._stream_names and hasattr(plot, "x_name"):
-                if plot.stream_name not in stream_axes:
-                    stream_axes[plot.stream_name] = []
-                    stream_signals[plot.stream_name] = []
-                axes = stream_axes[plot.stream_name]
-                signals = stream_signals[plot.stream_name]
-                group = self._stream_groups[self._stream_names[plot.stream_name]]
-                if plot.x_name not in axes:
-                    axes.append(plot.x_name)
-                if hasattr(plot, "z_name"):
-                    if plot.y_name not in axes:
-                        axes.append(plot.y_name)
-                    if plot.z_name not in signals:
-                        signals.append(plot.z_name)
-                else:
-                    for y in plot.y_names:
-                        if y not in signals:
-                            signals.append(y)
-                if not hasattr(plot, "liveFits") or not plot.liveFits:
-                    continue
-                fit_group = group.require_group("fits")
-                for fit in plot.liveFits:
-                    if not fit.results:
-                        continue
-                    fg = fit_group.require_group(fit.name)
-                    param_names = []
-                    param_values = []
-                    covars = []
-                    timestamps = []
-                    for t, res in fit.results.items():
-                        timestamps.append(float(t))
-                        if res.covar is None:
-                            covar = np.ones(
-                                (len(res.best_values), len(res.best_values))
-                            )
-                            covar *= np.nan
-                        else:
-                            covar = res.covar
-                        covars.append(covar)
-                        if not param_names:
-                            param_names = res.model.param_names
-                        param_values.append(res.params)
-                    fg.attrs["param_names"] = param_names
-                    timestamps, covars, param_values = sort_by_list(
-                        timestamps, [covars, param_values]
+                total_length = 0
+                sources = {}
+                sources_time = {}
+                dataset = None
+                for stream in stream_docs:
+                    total_length += self.get_length_of_stream(stream)
+                    dataset = self._stream_groups[stream][ch]
+                    sources[stream] = h5py.VirtualSource(
+                        self._stream_groups[stream][ch]
                     )
-                    # isos = []
-                    # for t in timestamps:
-                    #     isos.append(timestamp_to_ISO8601(t))
-                    fg["time"] = timestamps
-                    since = np.array(timestamps)
-                    since -= self._start_time
-                    fg["ElapsedTime"] = since
-                    fg["covariance"] = covars
-                    fg["covariance"].attrs["parameters"] = param_names[: len(covars[0])]
-                    param_values = get_param_dict(param_values)
-                    for p, v in param_values.items():
-                        fg[p] = v
-                    for name, val in fit.additional_data.items():
-                        fg[name] = val
-        for stream, axes in stream_axes.items():
-            signals = stream_signals[stream]
-            group = self._stream_groups[self._stream_names[stream]]
-            group.attrs["axes"] = axes
-            if signals:
-                group.attrs["signal"] = signals[0]
-                if len(signals) > 1:
-                    group.attrs["auxiliary_signals"] = signals[1:]
+                    sources_time[stream] = h5py.VirtualSource(
+                        self._stream_groups[stream]["time"]
+                    )
+                    dtype_time = self._stream_groups[stream]["time"].dtype
+                if dataset is None:
+                    continue
+                shape = (total_length, *dataset.shape[1:])
+                layout = h5py.VirtualLayout(shape=shape, dtype=dataset.dtype)
+                layout_time = h5py.VirtualLayout(
+                    shape=(total_length,), dtype=dtype_time
+                )
+                n = 0
+                counts_per_stream = {}
+                for stream, count in self._stream_counter:
+                    if stream not in stream_docs:
+                        continue
+                    if stream not in counts_per_stream:
+                        counts_per_stream[stream] = 0
+                        n_stream = 0
+                    else:
+                        n_stream = counts_per_stream[stream]
+                    layout[n : n + count] = sources[stream][n_stream : n_stream + count]
+                    layout_time[n : n + count] = sources_time[stream][
+                        n_stream : n_stream + count
+                    ]
+                    n += count
+                    counts_per_stream[stream] += count
+                self._channel_links[ch].create_virtual_dataset("value_log", layout)
+                self._channel_links[ch].create_virtual_dataset(
+                    "timestamps", layout_time
+                )
 
-        if self.do_nexus_output:
-            self.make_nexus_structure()
+            stream_axes = {}
+            stream_signals = {}
+            for plot in self._plot_data:
+                if plot.stream_name in self._stream_names and hasattr(plot, "x_name"):
+                    if plot.stream_name not in stream_axes:
+                        stream_axes[plot.stream_name] = []
+                        stream_signals[plot.stream_name] = []
+                    axes = stream_axes[plot.stream_name]
+                    signals = stream_signals[plot.stream_name]
+                    group = self._stream_groups[self._stream_names[plot.stream_name]]
+                    if plot.x_name not in axes:
+                        axes.append(plot.x_name)
+                    if hasattr(plot, "z_name"):
+                        if plot.y_name not in axes:
+                            axes.append(plot.y_name)
+                        if plot.z_name not in signals:
+                            signals.append(plot.z_name)
+                    else:
+                        for y in plot.y_names:
+                            if y not in signals:
+                                signals.append(y)
+                    if not hasattr(plot, "liveFits") or not plot.liveFits:
+                        continue
+                    fit_group = group.require_group("fits")
+                    for fit in plot.liveFits:
+                        if not fit.results:
+                            continue
+                        fg = fit_group.require_group(fit.name)
+                        param_names = []
+                        param_values = []
+                        covars = []
+                        timestamps = []
+                        for t, res in fit.results.items():
+                            timestamps.append(float(t))
+                            if res.covar is None:
+                                covar = np.ones(
+                                    (len(res.best_values), len(res.best_values))
+                                )
+                                covar *= np.nan
+                            else:
+                                covar = res.covar
+                            covars.append(covar)
+                            if not param_names:
+                                param_names = res.model.param_names
+                            param_values.append(res.params)
+                        fg.attrs["param_names"] = param_names
+                        timestamps, covars, param_values = sort_by_list(
+                            timestamps, [covars, param_values]
+                        )
+                        # isos = []
+                        # for t in timestamps:
+                        #     isos.append(timestamp_to_ISO8601(t))
+                        fg["time"] = timestamps
+                        since = np.array(timestamps)
+                        since -= self._start_time
+                        fg["ElapsedTime"] = since
+                        fg["covariance"] = covars
+                        fg["covariance"].attrs["parameters"] = param_names[
+                            : len(covars[0])
+                        ]
+                        param_values = get_param_dict(param_values)
+                        for p, v in param_values.items():
+                            fg[p] = v
+                        for name, val in fit.additional_data.items():
+                            fg[name] = val
+            for stream, axes in stream_axes.items():
+                signals = stream_signals[stream]
+                group = self._stream_groups[self._stream_names[stream]]
+                group.attrs["axes"] = axes
+                if signals:
+                    group.attrs["signal"] = signals[0]
+                    if len(signals) > 1:
+                        group.attrs["auxiliary_signals"] = signals[1:]
+
+            if self.do_nexus_output:
+                self.make_nexus_structure()
 
         self.close()
 

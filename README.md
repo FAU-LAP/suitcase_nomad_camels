@@ -12,6 +12,10 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+## 0.5
+Changes:
+- Behavior of file-handling changed, now hdf5 file is being closed when events are separated by more than one second, this is to prevent loss of data if the program crashes while the file is still open
+
 ### 0.4.7
 
 Changes:
