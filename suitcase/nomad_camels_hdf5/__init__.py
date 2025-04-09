@@ -946,8 +946,21 @@ class Serializer(event_model.DocumentRouter):
 
             stream_axes = {}
             stream_signals = {}
+            plot_dicts = {}
             for plot in self._plot_data:
+                plot_data = {}
+                name = plot.windowTitle()
+                if name in plot_dicts:
+                    i = 1
+                    name = name + f"_{i}"
+                    while name in plot_dicts:
+                        name = name.replace(f"_{i-1}", f"_{i}")
+                        i += 1
+                plot_dicts[plot.windowTitle()] = plot_data
                 if plot.stream_name in self._stream_names and hasattr(plot, "x_name"):
+                    plot_data["stream_name"] = plot.stream_name
+                    plot_data["x_name"] = plot.x_name
+                    plot_data["fits"] = plot.fits
                     if plot.stream_name not in stream_axes:
                         stream_axes[plot.stream_name] = []
                         stream_signals[plot.stream_name] = []
@@ -957,11 +970,15 @@ class Serializer(event_model.DocumentRouter):
                     if plot.x_name not in axes:
                         axes.append(plot.x_name)
                     if hasattr(plot, "z_name"):
+                        plot_data["y_name"] = plot.y_name
+                        plot_data["z_name"] = plot.z_name
                         if plot.y_name not in axes:
                             axes.append(plot.y_name)
                         if plot.z_name not in signals:
                             signals.append(plot.z_name)
                     else:
+                        plot_data["y_names"] = plot.y_names
+                        plot_data["y_axes"] = plot.livePlot.y_axes
                         for y in plot.y_names:
                             if y not in signals:
                                 signals.append(y)
@@ -1017,6 +1034,8 @@ class Serializer(event_model.DocumentRouter):
                     group.attrs["signal"] = signals[0]
                     if len(signals) > 1:
                         group.attrs["auxiliary_signals"] = signals[1:]
+
+            recourse_entry_dict(self._entry.create_group("plot_info"), plot_dicts)
 
             if self.do_nexus_output:
                 self.make_nexus_structure()
