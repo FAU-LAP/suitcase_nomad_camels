@@ -11,6 +11,31 @@ pip install suitcase-nomad-camels-hdf5
 
 
 # Changelog
+
+## 0.5
+Changes:
+- Behavior of file-handling changed, now hdf5 file is being closed when events are separated by more than one second, this is to prevent loss of data if the program crashes while the file is still open (Note: this needs to be further improved, as the behavior only starts once the event has taken longer, i.e. if there are a few measurements that are fast and then it takes several seconds for the next one, in the mean time the file is still open and closes only after that measurement)
+
+### 0.4.7
+
+Changes:
+
+- Now uses the dynamic file extensions coming from CAMELS (either `.h5` or `.nxs`) to save the data. Works with NOMAD CAMELS >= 1.8.0
+
+### 0.4.6
+
+Changes:
+
+- variable signals now return dictionaries and not namedtuples (for NOMAD CAMELS starting with version 1.8.0). CAMELS suitcase can now handle these changes.
+
+### 0.4.5
+Fixes:
+- events with more than one reading can now also be processed (e.g. for flyers)
+
+### 0.4.4
+Fixes:
+- strings could only be saved once, now fixed
+
 ### 0.4.3
 Changes:
 - "experiment" renamed to "measurement"
