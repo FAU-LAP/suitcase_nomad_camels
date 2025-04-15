@@ -1048,64 +1048,112 @@ class Serializer(event_model.DocumentRouter):
         )
         process = nx_group.create_group("process")
         process.attrs["NX_class"] = "NXprocess"
-        process["program"] = h5py.SoftLink(f"/{self._entry_name}/program/program_name")
+        self._h5_output_file.copy(f"/{self._entry_name}/program/program_name", f"/{nexus_name}/process/program")
         try:
             version = self._entry["program"]["version"]
-        except:
+        except (KeyError, TypeError):
             version = ""
         try:
             program_url = self._entry["program"]["program_url"]
-        except:
+        except (KeyError, TypeError):
             program_url = ""
         process["program"].attrs["version"] = version
         process["program"].attrs["program_url"] = program_url
-        nx_group["user"] = h5py.SoftLink(f"/{self._entry_name}/user")
-        nx_group["sample"] = h5py.SoftLink(f"/{self._entry_name}/sample")
+        process.create_group("python_environment")
+        process["python_environment"].attrs["NX_class"] = "NXparamerters"
+        for package in self._entry["program"]["python_environment"]:
+            process["python_environment"][package] = h5py.SoftLink(f"/{self._entry_name}/program/python_environment/{package}")
+        process.create_group("python")
+        process["python"].attrs["NX_class"] = "NXparamerters"
+        process["python"]["python_version"] = self._entry["program"]["python_environment"].attrs["python_version"]
+        # additional fields may be added to user and sample of nexus entry, so adding links by element, not to the whole group
+        user = nx_group.create_group("user")
+        user.attrs["NX_class"] = "NXuser"
+        for field in self._entry["user"]:
+            if field == "identifier":
+                self._h5_output_file.copy(f"/{self._entry_name}/user/identifier/identifier", f"/{nexus_name}/user/identifier_user")
+                try:
+                    service = self._entry["user"]["identifier"]["service"]
+                except (KeyError, TypeError):
+                    service = ""
+                user["identifier_user"].attrs["type"] = service
+                user["identifier_user"].attrs["custom"] = True
+            else:
+                user[field] = h5py.SoftLink(f"/{self._entry_name}/user/{field}")
+        sample = nx_group.create_group("sample")
+        sample.attrs["NX_class"] = "NXsample"
+        # sample["chemical_formula"] = "SiO2"       #test
+        for field in self._entry["sample"]:
+            if field == "sample_id":
+                if self._entry["sample"]["sample_id"][()]:
+                    self._h5_output_file.copy(f"/{self._entry_name}/sample/sample_id", f"/{nexus_name}/sample/identifier_sample")
+                    sample["identifier_sample"].attrs["type"] = "laboratory specific"
+                    sample["identifier_sample"].attrs["custom"] = True
+            else:
+                sample[field] = h5py.SoftLink(f"/{self._entry_name}/sample/{field}")
         for dev in self._entry["instruments"]:
-            nx_group[dev] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}")
-            nx_group[dev].create_group("environment")
-            nx_group[dev]["environment"].attrs["NX_class"] = "NXenvironment"
-            sensors = []
-            if "sensors" not in nx_group[dev]:
-                nx_group[dev].create_group("sensors")
-            for sensor in nx_group[dev]["sensors"]:
-                nx_group[dev]["environment"][sensor] = h5py.SoftLink(
-                    f"/{self._entry_name}/instruments/{dev}/sensors/{sensor}"
-                )
-                nx_group[dev]["environment"][sensor]["calibration_time"] = ""
-                nx_group[dev]["environment"][sensor]["run_control"] = ""
-                nx_group[dev]["environment"][sensor]["run_control"].attrs[
-                    "description"
-                ] = ""
-                nx_group[dev]["environment"][sensor]["value"] = 0.0
-                sensors.append(sensor)
-            if "outputs" not in nx_group[dev]:
-                nx_group[dev].create_group("outputs")
-            for controller in nx_group[dev]["outputs"]:
-                nx_group[dev]["environment"][controller] = h5py.SoftLink(
-                    f"/{self._entry_name}/instruments/{dev}/outputs/{controller}"
-                )
-            nx_group[dev]["environment"].create_group("pid")
-            nx_group[dev]["environment"]["pid"].attrs["NX_class"] = "NXpid"
-            nx_group[dev]["environment"]["independent_controllers"] = ""
-            nx_group[dev]["environment"]["measurement_sensors"] = " ".join(sensors)
-            try:
-                short_name = self._entry["instruments"][dev]["short_name"]
-            except:
-                short_name = ""
-            nx_group[dev]["name"].attrs["short_name"] = short_name
-            del nx_group[dev]["short_name"]
-        nx_group["data"] = h5py.SoftLink(f"/{self._entry_name}/data")
-        for dat in self._entry["data"]:
-            # check if group has attribute NX_class as NXdata
-            if self._entry["data"][dat].attrs.get("NX_class") == "NXdata":
-                nx_group[dat] = h5py.SoftLink(f"/{self._entry_name}/data/{dat}")
-        additionals = nx_group.create_group("additional_information")
-        additionals.attrs["NX_class"] = "NXcollection"
-        additionals["measurement_details"] = h5py.SoftLink(
+            instrument = nx_group.create_group(dev)
+            instrument.attrs["NX_class"] = "NXinstrument"
+            environment = instrument.create_group("environment")
+            environment.attrs["NX_class"] = "NXenvironment"
+            sensors_list = []
+            outputs_list = []
+            for child in self._entry["instruments"][dev]:
+                if child == "ELN-instrument-id":
+                    if self._entry["instruments"][dev]["ELN-instrument-id"][()]:
+                        self._h5_output_file.copy(f"/{self._entry_name}/instruments/{dev}/ELN-instrument-id", f"/{nexus_name}/{dev}/identifier_ELN_instrument")
+                        instrument["identifier_ELN_instrument"].attrs["type"] = "laboratory specific"
+                        instrument["identifier_ELN_instrument"].attrs["custom"] = True
+                elif child == "name":
+                    self._h5_output_file.copy(f"/{self._entry_name}/instruments/{dev}/name", f"/{nexus_name}/{dev}/name")
+                    try:
+                        short_name = self._entry["instruments"][dev]["short_name"]
+                    except (KeyError, TypeError):
+                        short_name = ""
+                    instrument["name"].attrs["short_name"] = short_name
+                elif child == "short_name":
+                    pass
+                elif child == "settings":
+                    settings = instrument.create_group("settings")
+                    settings.attrs["NX_class"] = "NXparameters"
+                    for field in self._entry["instruments"][dev]["settings"]:
+                        settings[field] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/settings/{field}")
+                elif child == "config_channel_metadata":
+                    configs = instrument.create_group("config_channel_metadata")
+                    configs.attrs["NX_class"] = "NXparameters"
+                    for field in self._entry["instruments"][dev]["config_channel_metadata"]:
+                        configs[field] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/config_channel_metadata/{field}")
+                elif child == "sensors":
+                    for sensor_name in self._entry["instruments"][dev]["sensors"]:
+                        instrument[sensor_name] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/sensors/{sensor_name}")
+                        environment.create_group(sensor_name)
+                        environment[sensor_name].attrs["NX_class"] = "NXsensor"
+                        for sensor_child in self._entry["instruments"][dev]["sensors"][sensor_name]:
+                            environment[sensor_name][sensor_child] = h5py.SoftLink(
+                                f"/{self._entry_name}/instruments/{dev}/sensors/{sensor_name}/{sensor_child}"
+                            )
+                        environment[sensor_name]["calibration_time"] = "1970-01-01T01:00:00+01:00"  # has to be NX_DATE_TIME, not really known
+                        environment[sensor_name]["run_control"] = ""
+                        environment[sensor_name]["run_control"].attrs[
+                            "description"
+                        ] = ""
+                        environment[sensor_name]["value"] = 0.0
+                        sensors_list.append(sensor_name)
+                elif child == "outputs":
+                    for output_name in self._entry["instruments"][dev]["outputs"]:
+                        instrument[output_name] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/outputs/{output_name}")
+                        environment[output_name] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/outputs/{output_name}")
+                        outputs_list.append(output_name)
+                else:
+                    instrument[child] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/{child}")
+            environment.create_group("pid")
+            environment["pid"].attrs["NX_class"] = "NXpid"
+            environment["independent_controllers"] = " ".join(outputs_list)
+            environment["measurement_sensors"] = " ".join(sensors_list)
+        self.data_to_flat_structure(nexus_name=nexus_name, group_name="data", group_path="data")
+        nx_group["additional_information"] = h5py.SoftLink(
             f"/{self._entry_name}/measurement_details"
         )
-        additionals["program"] = h5py.SoftLink(f"/{self._entry_name}/program")
         protocol = nx_group.create_group("protocol")
         protocol.attrs["NX_class"] = "NXnote"
         protocol["file_name"] = h5py.SoftLink(
@@ -1129,3 +1177,15 @@ class Serializer(event_model.DocumentRouter):
                     recursive_add_class(item)
                     
         recursive_add_class(self._h5_output_file)
+
+    def data_to_flat_structure(self, nexus_name, group_name, group_path):
+        # copy group and its attributes, but not datasets and not subgroups
+        self._h5_output_file[nexus_name].create_group(group_name)
+        for key, value in self._entry[group_path].attrs.items():
+            self._h5_output_file[nexus_name][group_name].attrs[key] = value
+        # softlink all datasets, but not subgroups; recursively call this function for subgroups
+        for child in self._entry[group_path]:
+            if isinstance(self._entry[group_path][child], h5py.Group):
+                self.data_to_flat_structure(nexus_name=nexus_name, group_name=child, group_path=f"{group_path}/{child}")
+            else:
+                self._h5_output_file[nexus_name][group_name][child] = h5py.SoftLink(f"/{self._entry_name}/{group_path}/{child}")
