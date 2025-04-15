@@ -566,8 +566,6 @@ class Serializer(event_model.DocumentRouter):
         entry = self._h5_output_file.create_group(entry_name)
         self._entry = entry
         entry.attrs["NX_class"] = "NXcollection"
-        # entry.attrs['NX_class'] = "NXcollection"
-        # entry["definition"] = "NXsensor_scan"
         if "versions" in doc and set(doc["versions"].keys()) == {
             "bluesky",
             "ophyd",
@@ -731,6 +729,7 @@ class Serializer(event_model.DocumentRouter):
                 if key.startswith("python_file_"):
                     if not "driver_files" in dev_group:
                         dev_group.create_group("driver_files")
+                        dev_group["driver_files"].attrs["NX_class"] = "NXcollection"
                     dev_group["driver_files"][key] = val
                     used_keys.append(key)
             for key in used_keys:
@@ -817,6 +816,7 @@ class Serializer(event_model.DocumentRouter):
             stream_group.create_dataset(
                 name="ElapsedTime", data=since, chunks=(1,), maxshape=(None,)
             )
+            stream_group["ElapsedTime"].attrs["units"] = "s"
         else:
             stream_group["time"].resize((stream_group["time"].shape[0] + 1,))
             stream_group["time"][-1] = time
@@ -1029,11 +1029,13 @@ class Serializer(event_model.DocumentRouter):
             nexus_name = "NeXus_" + self._entry_name[7:]
         else:
             nexus_name = "NeXus_" + self._entry_name
+        self._h5_output_file.attrs["default"] = nexus_name
         nx_group = self._h5_output_file.create_group(nexus_name)
         nx_group.attrs["NX_class"] = "NXentry"
+        nx_group.attrs["default"] = "data"
         nx_group["definition"] = "NXsensor_scan"
         nx_group["definition"].attrs["version"] = ""
-        nx_group["measurement_description"] = h5py.SoftLink(
+        nx_group["experiment_description"] = h5py.SoftLink(
             f"/{self._entry_name}/measurement_details/measurement_description"
         )
         nx_group["start_time"] = h5py.SoftLink(
@@ -1059,6 +1061,7 @@ class Serializer(event_model.DocumentRouter):
         nx_group["sample"] = h5py.SoftLink(f"/{self._entry_name}/sample")
         for dev in self._entry["instruments"]:
             nx_group[dev] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}")
+            nx_group[dev]["name"].attrs["short_name"] = nx_group[dev]["short_name"][()]
             nx_group[dev].create_group("environment")
             nx_group[dev]["environment"].attrs["NX_class"] = "NXenvironment"
             sensors = []
@@ -1096,3 +1099,13 @@ class Serializer(event_model.DocumentRouter):
             f"/{self._entry_name}/measurement_details"
         )
         additionals["program"] = h5py.SoftLink(f"/{self._entry_name}/program")
+
+        make_nx_classes_collection(nx_group)
+
+
+def make_nx_classes_collection(group):
+    for key in group:
+        if isinstance(group[key], h5py.Group):
+            if not "NX_class" in group[key].attrs:
+                group[key].attrs["NX_class"] = "NXcollection"
+            make_nx_classes_collection(group[key])
