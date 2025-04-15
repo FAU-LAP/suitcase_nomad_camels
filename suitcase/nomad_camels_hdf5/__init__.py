@@ -817,6 +817,8 @@ class Serializer(event_model.DocumentRouter):
             stream_group.create_dataset(
                 name="ElapsedTime", data=since, chunks=(1,), maxshape=(None,)
             )
+            stream_group["time"].attrs["units"] = "s"
+            stream_group["ElapsedTime"].attrs["units"] = "s"
         else:
             stream_group["time"].resize((stream_group["time"].shape[0] + 1,))
             stream_group["time"][-1] = time
@@ -1021,6 +1023,8 @@ class Serializer(event_model.DocumentRouter):
 
             if self.do_nexus_output:
                 self.make_nexus_structure()
+        
+            self.nxcollection_default_class()
 
         self.close()
 
@@ -1033,7 +1037,7 @@ class Serializer(event_model.DocumentRouter):
         nx_group.attrs["NX_class"] = "NXentry"
         nx_group["definition"] = "NXsensor_scan"
         nx_group["definition"].attrs["version"] = ""
-        nx_group["measurement_description"] = h5py.SoftLink(
+        nx_group["experiment_description"] = h5py.SoftLink(
             f"/{self._entry_name}/measurement_details/measurement_description"
         )
         nx_group["start_time"] = h5py.SoftLink(
@@ -1085,6 +1089,12 @@ class Serializer(event_model.DocumentRouter):
             nx_group[dev]["environment"]["pid"].attrs["NX_class"] = "NXpid"
             nx_group[dev]["environment"]["independent_controllers"] = ""
             nx_group[dev]["environment"]["measurement_sensors"] = " ".join(sensors)
+            try:
+                short_name = self._entry["instruments"][dev]["short_name"]
+            except:
+                short_name = ""
+            nx_group[dev]["name"].attrs["short_name"] = short_name
+            del nx_group[dev]["short_name"]
         nx_group["data"] = h5py.SoftLink(f"/{self._entry_name}/data")
         for dat in self._entry["data"]:
             # check if group has attribute NX_class as NXdata
@@ -1096,3 +1106,26 @@ class Serializer(event_model.DocumentRouter):
             f"/{self._entry_name}/measurement_details"
         )
         additionals["program"] = h5py.SoftLink(f"/{self._entry_name}/program")
+        protocol = nx_group.create_group("protocol")
+        protocol.attrs["NX_class"] = "NXnote"
+        protocol["file_name"] = h5py.SoftLink(
+            f"/{self._entry_name}/measurement_details/plan_name"
+        )
+        protocol["description"] = h5py.SoftLink(
+            f"/{self._entry_name}/measurement_details/protocol_overview"
+        )
+        self._h5_output_file.attrs["default"] = nexus_name
+        nx_group.attrs["default"] = "data"
+        self._h5_output_file.attrs["h5py_version"] = h5py.__version__
+        self._h5_output_file.attrs["HDF5_Version"] = h5py.version.hdf5_version
+        self._h5_output_file.attrs["file_time"] = timestamp_to_ISO8601(self._start_time)
+    
+    def nxcollection_default_class(self):
+        def recursive_add_class(group):
+            if "NX_class" not in group.attrs:
+                group.attrs["NX_class"] = "NXcollection"
+            for name, item in group.items():
+                if isinstance(item, h5py.Group):
+                    recursive_add_class(item)
+                    
+        recursive_add_class(self._h5_output_file)
