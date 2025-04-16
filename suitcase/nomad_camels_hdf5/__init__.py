@@ -1023,7 +1023,7 @@ class Serializer(event_model.DocumentRouter):
             if self.do_nexus_output:
                 self.make_nexus_structure()
         
-            self.nxcollection_default_class()
+            nxcollection_default_class(self._h5_output_file)
 
         self.close()
 
@@ -1187,4 +1187,4 @@ def nxcollection_default_class(group):
         if isinstance(group[key], h5py.Group):
             if not "NX_class" in group[key].attrs:
                 group[key].attrs["NX_class"] = "NXcollection"
-            make_nx_classes_collection(group[key])
+            nxcollection_default_class(group[key])
