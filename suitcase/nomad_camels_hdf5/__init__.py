@@ -566,8 +566,6 @@ class Serializer(event_model.DocumentRouter):
         entry = self._h5_output_file.create_group(entry_name)
         self._entry = entry
         entry.attrs["NX_class"] = "NXcollection"
-        # entry.attrs['NX_class'] = "NXcollection"
-        # entry["definition"] = "NXsensor_scan"
         if "versions" in doc and set(doc["versions"].keys()) == {
             "bluesky",
             "ophyd",
@@ -731,6 +729,7 @@ class Serializer(event_model.DocumentRouter):
                 if key.startswith("python_file_"):
                     if not "driver_files" in dev_group:
                         dev_group.create_group("driver_files")
+                        dev_group["driver_files"].attrs["NX_class"] = "NXcollection"
                     dev_group["driver_files"][key] = val
                     used_keys.append(key)
             for key in used_keys:
@@ -1033,8 +1032,10 @@ class Serializer(event_model.DocumentRouter):
             nexus_name = "NeXus_" + self._entry_name[7:]
         else:
             nexus_name = "NeXus_" + self._entry_name
+        self._h5_output_file.attrs["default"] = nexus_name
         nx_group = self._h5_output_file.create_group(nexus_name)
         nx_group.attrs["NX_class"] = "NXentry"
+        nx_group.attrs["default"] = "data"
         nx_group["definition"] = "NXsensor_scan"
         nx_group["definition"].attrs["version"] = ""
         nx_group["experiment_description"] = h5py.SoftLink(
@@ -1167,16 +1168,6 @@ class Serializer(event_model.DocumentRouter):
         self._h5_output_file.attrs["h5py_version"] = h5py.__version__
         self._h5_output_file.attrs["HDF5_Version"] = h5py.version.hdf5_version
         self._h5_output_file.attrs["file_time"] = timestamp_to_ISO8601(self._start_time)
-    
-    def nxcollection_default_class(self):
-        def recursive_add_class(group):
-            if "NX_class" not in group.attrs:
-                group.attrs["NX_class"] = "NXcollection"
-            for name, item in group.items():
-                if isinstance(item, h5py.Group):
-                    recursive_add_class(item)
-                    
-        recursive_add_class(self._h5_output_file)
 
     def data_to_flat_structure(self, nexus_name, group_name, group_path):
         # copy group and its attributes, but not datasets and not subgroups
@@ -1189,3 +1180,11 @@ class Serializer(event_model.DocumentRouter):
                 self.data_to_flat_structure(nexus_name=nexus_name, group_name=child, group_path=f"{group_path}/{child}")
             else:
                 self._h5_output_file[nexus_name][group_name][child] = h5py.SoftLink(f"/{self._entry_name}/{group_path}/{child}")
+
+
+def nxcollection_default_class(group):
+    for key in group:
+        if isinstance(group[key], h5py.Group):
+            if not "NX_class" in group[key].attrs:
+                group[key].attrs["NX_class"] = "NXcollection"
+            make_nx_classes_collection(group[key])
