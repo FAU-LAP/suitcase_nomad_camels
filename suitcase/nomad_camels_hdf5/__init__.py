@@ -1150,8 +1150,6 @@ class Serializer(event_model.DocumentRouter):
                         outputs_list.append(output_name)
                 else:
                     instrument[child] = h5py.SoftLink(f"/{self._entry_name}/instruments/{dev}/{child}")
-            environment.create_group("pid")
-            environment["pid"].attrs["NX_class"] = "NXpid"
             environment["independent_controllers"] = " ".join(outputs_list)
             environment["measurement_sensors"] = " ".join(sensors_list)
         self.data_to_flat_structure(nexus_name=nexus_name, group_name="data", group_path="data")
