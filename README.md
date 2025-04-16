@@ -12,6 +12,11 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+## 0.6.0
+Changes:
+- strongly improved the NeXus entry
+- added functionality to create a new file after a given number of hours (file includes same metadata)
+
 ### 0.5.1
 Changes:
 - improved the NeXus entry
