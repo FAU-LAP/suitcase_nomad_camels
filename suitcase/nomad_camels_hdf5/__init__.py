@@ -1024,9 +1024,9 @@ class Serializer(event_model.DocumentRouter):
                 self.make_nexus_structure()
         
             nxcollection_default_class(self._h5_output_file)
-        self._h5_output_file.attrs["h5py_version"] = h5py.__version__
-        self._h5_output_file.attrs["HDF5_Version"] = h5py.version.hdf5_version
-        self._h5_output_file.attrs["file_time"] = timestamp_to_ISO8601(self._start_time)
+            self._h5_output_file.attrs["h5py_version"] = h5py.__version__
+            self._h5_output_file.attrs["HDF5_Version"] = h5py.version.hdf5_version
+            self._h5_output_file.attrs["file_time"] = timestamp_to_ISO8601(self._start_time)
 
         self.close()
 
