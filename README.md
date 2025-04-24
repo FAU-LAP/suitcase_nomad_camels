@@ -12,6 +12,10 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 0.6.1
+Changes:
+- Deprecated additional data from fits removed
+
 ## 0.6.0
 Changes:
 - strongly improved the NeXus entry

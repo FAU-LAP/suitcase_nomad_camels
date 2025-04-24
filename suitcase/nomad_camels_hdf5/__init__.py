@@ -1091,8 +1091,6 @@ class Serializer(event_model.DocumentRouter):
                     param_values = get_param_dict(param_values)
                     for p, v in param_values.items():
                         fg[p] = v
-                    for name, val in fit.additional_data.items():
-                        fg[name] = val
         for stream, axes in stream_axes.items():
             signals = stream_signals[stream]
             group = self._stream_groups[self._stream_names[stream]]
