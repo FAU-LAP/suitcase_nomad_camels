@@ -12,6 +12,22 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 0.6.2
+Changes:
+- removed entry name from data file name
+
+Fixes:
+- new function with new datafile in some cases threw an error, now fixed
+
+### 0.6.1
+Changes:
+- Deprecated additional data from fits removed
+
+## 0.6.0
+Changes:
+- strongly improved the NeXus entry
+- added functionality to create a new file after a given number of hours (file includes same metadata)
+
 ### 0.5.1
 Changes:
 - improved the NeXus entry
