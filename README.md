@@ -12,6 +12,9 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 0.6.3
+Cleaned up confusing things
+
 ### 0.6.2
 Changes:
 - removed entry name from data file name
