@@ -1219,7 +1219,7 @@ class Serializer(event_model.DocumentRouter):
             if isinstance(self._entry[group_path][child], h5py.Group):
                 self.data_to_flat_structure(
                     nexus_name=nexus_name,
-                    group_name=child,
+                    group_name=group_name+"_"+child,
                     group_path=f"{group_path}/{child}",
                 )
             else:
