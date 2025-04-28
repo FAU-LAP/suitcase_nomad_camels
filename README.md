@@ -12,6 +12,13 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 0.6.2
+Changes:
+- removed entry name from data file name
+
+Fixes:
+- new function with new datafile in some cases threw an error, now fixed
+
 ### 0.6.1
 Changes:
 - Deprecated additional data from fits removed

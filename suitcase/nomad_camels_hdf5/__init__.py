@@ -284,24 +284,14 @@ class FileManager:
         abs_file_path = (
             (self.directory / Path(relative_file_path)).expanduser().resolve()
         )
-        if (
-            (abs_file_path in self._reserved_names)
-            or os.path.isfile(abs_file_path.as_posix())
-            and self._new_file_each
-        ):
-            entry_name_non_iso = clean_filename(entry_name)
-            abs_file_path = abs_file_path.as_posix()
-            if not abs_file_path.endswith(f"{entry_name_non_iso}{self.file_extension}"):
-                abs_file_path = (
-                    os.path.splitext(abs_file_path)[0]
-                    + f"_{entry_name_non_iso}{self.file_extension}"
-                )
         i = 1
         while (
             (abs_file_path in self._reserved_names)
             or os.path.isfile(abs_file_path)
             and self._new_file_each
         ):
+            if isinstance(abs_file_path, Path):
+                abs_file_path = abs_file_path.as_posix()
             if abs_file_path.endswith(f"_{i-1}{self.file_extension}"):
                 abs_file_path = abs_file_path.replace(
                     f"_{i-1}{self.file_extension}", f"_{i}{self.file_extension}"
@@ -336,7 +326,7 @@ class FileManager:
                 "The last file settings are not available. No file was opened before."
             )
         file_settings = self._last_file_settings.copy()
-        if "Xhours" in file_settings["name"]:
+        if isinstance(file_settings["name"], str) and "Xhours" in file_settings["name"]:
             i = int(file_settings["name"].split("_Xhours_")[-1].split(".")[-2])
             file_settings["name"] = file_settings["name"].replace(
                 f"_Xhours_{i}.", f"_Xhours_{i+1}."
