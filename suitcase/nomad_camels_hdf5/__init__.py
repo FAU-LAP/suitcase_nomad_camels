@@ -802,6 +802,7 @@ class Serializer(event_model.DocumentRouter):
         super().descriptor(doc)
         self.ensure_open(include_channel_links=False)
         stream_name = doc["name"]
+        stream_name = stream_name.replace("||sub_stream||", "/")
         if "_fits_readying_" in stream_name:
             return
         if stream_name in self._stream_groups:
@@ -1022,14 +1023,19 @@ class Serializer(event_model.DocumentRouter):
         stream_axes = {}
         stream_signals = {}
         for plot in self._plot_data:
-            name = plot.windowTitle()
-            if plot.stream_name in self._stream_names and hasattr(plot, "x_name"):
-                if plot.stream_name not in stream_axes:
-                    stream_axes[plot.stream_name] = []
-                    stream_signals[plot.stream_name] = []
-                axes = stream_axes[plot.stream_name]
-                signals = stream_signals[plot.stream_name]
-                group = self._stream_groups[self._stream_names[plot.stream_name]]
+            if (
+                plot.stream_name in self._stream_names
+                or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names
+            ) and hasattr(plot, "x_name"):
+                stream_name = plot.stream_name
+                if stream_name not in self._stream_names:
+                    stream_name = stream_name.replace("||sub_stream||", "/")
+                if stream_name not in stream_axes:
+                    stream_axes[stream_name] = []
+                    stream_signals[stream_name] = []
+                axes = stream_axes[stream_name]
+                signals = stream_signals[stream_name]
+                group = self._stream_groups[self._stream_names[stream_name]]
                 if plot.x_name not in axes:
                     axes.append(plot.x_name)
                 if hasattr(plot, "z_name"):
@@ -1097,9 +1103,7 @@ class Serializer(event_model.DocumentRouter):
         nxcollection_default_class(self._h5_output_file)
         self._h5_output_file.attrs["h5py_version"] = h5py.__version__
         self._h5_output_file.attrs["HDF5_Version"] = h5py.version.hdf5_version
-        self._h5_output_file.attrs["file_time"] = timestamp_to_ISO8601(
-            self._start_time
-        )
+        self._h5_output_file.attrs["file_time"] = timestamp_to_ISO8601(self._start_time)
 
         self.close()
 
@@ -1195,9 +1199,9 @@ class Serializer(event_model.DocumentRouter):
                             f"/{self._entry_name}/instruments/{dev}/ELN-instrument-id",
                             f"/{nexus_name}/{dev}/identifier_ELN_instrument",
                         )
-                        instrument["identifier_ELN_instrument"].attrs["type"] = (
-                            "laboratory specific"
-                        )
+                        instrument["identifier_ELN_instrument"].attrs[
+                            "type"
+                        ] = "laboratory specific"
                         instrument["identifier_ELN_instrument"].attrs["custom"] = True
                 elif child == "name":
                     self._h5_output_file.copy(
@@ -1240,13 +1244,13 @@ class Serializer(event_model.DocumentRouter):
                             environment[sensor_name][sensor_child] = h5py.SoftLink(
                                 f"/{self._entry_name}/instruments/{dev}/sensors/{sensor_name}/{sensor_child}"
                             )
-                        environment[sensor_name]["calibration_time"] = (
-                            "1970-01-01T01:00:00+01:00"  # has to be NX_DATE_TIME, not really known
-                        )
+                        environment[sensor_name][
+                            "calibration_time"
+                        ] = "1970-01-01T01:00:00+01:00"  # has to be NX_DATE_TIME, not really known
                         environment[sensor_name]["run_control"] = ""
-                        environment[sensor_name]["run_control"].attrs["description"] = (
-                            ""
-                        )
+                        environment[sensor_name]["run_control"].attrs[
+                            "description"
+                        ] = ""
                         environment[sensor_name]["value"] = 0.0
                         sensors_list.append(sensor_name)
                 elif child == "outputs":
@@ -1291,7 +1295,7 @@ class Serializer(event_model.DocumentRouter):
             if isinstance(self._entry[group_path][child], h5py.Group):
                 self.data_to_flat_structure(
                     nexus_name=nexus_name,
-                    group_name=group_name+"_"+child,
+                    group_name=group_name + "_" + child,
                     group_path=f"{group_path}/{child}",
                 )
             else:
