@@ -12,6 +12,9 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 0.7.0
+Compatible with more nested data structure of CAMELS 1.9.0
+
 ### 0.6.3
 Cleaned up confusing things
 
