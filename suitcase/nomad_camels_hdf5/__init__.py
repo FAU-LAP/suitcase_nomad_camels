@@ -803,6 +803,7 @@ class Serializer(event_model.DocumentRouter):
         self.ensure_open(include_channel_links=False)
         stream_name = doc["name"]
         stream_name = stream_name.replace("||sub_stream||", "/")
+        stream_name = stream_name.replace("||subprotocol_stream||", "/")
         if "_fits_readying_" in stream_name:
             return
         if stream_name in self._stream_groups:
@@ -1025,11 +1026,12 @@ class Serializer(event_model.DocumentRouter):
         for plot in self._plot_data:
             if (
                 plot.stream_name in self._stream_names
-                or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names
+                or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names or plot.stream_name.replace("||subprotocol_stream||", "/") in self._stream_names
             ) and hasattr(plot, "x_name"):
                 stream_name = plot.stream_name
                 if stream_name not in self._stream_names:
                     stream_name = stream_name.replace("||sub_stream||", "/")
+                    stream_name = stream_name.replace("||subprotocol_stream||", "/")
                 if stream_name not in stream_axes:
                     stream_axes[stream_name] = []
                     stream_signals[stream_name] = []
@@ -1088,13 +1090,330 @@ class Serializer(event_model.DocumentRouter):
                     for p, v in param_values.items():
                         fg[p] = v
         for stream, axes in stream_axes.items():
-            signals = stream_signals[stream]
+            signals = stream_signals.get(stream, [])
             group = self._stream_groups[self._stream_names[stream]]
-            group.attrs["axes"] = axes
-            if signals:
-                group.attrs["signal"] = signals[0]
-                if len(signals) > 1:
-                    group.attrs["auxiliary_signals"] = signals[1:]
+
+            # Validate that the referenced axes and signals actually exist
+            # under this stream group's subtree. Store names as paths
+            # relative to the stream group (e.g., 'demo_instrument_motorX' or
+            # 'subgroup/dataset'), not as absolute file paths.
+            rel_axes = []
+            for ax in axes:
+                # If the axis exists directly under the stream group (or in a
+                # nested subgroup using a relative path), prefer the relative
+                # representation. Also accept if a dataset name appears inside
+                # an expression (e.g., 'detectorx*5+2') by checking if any
+                # child name is a substring of the axis expression.
+                try:
+                    if ax in group:
+                        rel_axes.append(ax)
+                        continue
+                except Exception:
+                    # group membership check may fail for non-string names
+                    pass
+
+                # Substring match: if an existing child dataset name appears
+                # inside the axis expression, use that dataset name.
+                if isinstance(ax, str):
+                    try:
+                        matched = False
+                        for child in group:
+                            try:
+                                # prefer datasets but accept any existing child
+                                if child in ax:
+                                    # make sure it actually exists (some lookups can fail)
+                                    _ = group[child]
+                                    rel_axes.append(child)
+                                    matched = True
+                                    break
+                            except Exception:
+                                pass
+                        if matched:
+                            continue
+                    except Exception:
+                        pass
+
+                # If ax is a nested path like 'subgrp/dset', try resolving
+                # it relative to the group.
+                if isinstance(ax, str) and "/" in ax:
+                    try:
+                        _ = group[ax]
+                        rel_axes.append(ax)
+                        continue
+                    except Exception:
+                        pass
+
+                # If ax is an absolute path in the file but it falls under
+                # this group's subtree, convert to relative form.
+                if isinstance(ax, str) and ax.startswith("/"):
+                    try:
+                        ds = self._h5_output_file[ax]
+                        prefix = group.name + "/"
+                        if ax.startswith(prefix):
+                            rel = ax[len(prefix) :]
+                            # only accept if non-empty and exists via relative
+                            if rel:
+                                try:
+                                    _ = group[rel]
+                                    rel_axes.append(rel)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                # If not found directly, look one level down in any subgroup
+                # ending with '_variable_signal'. The plot axis may be an
+                # expression; check each dataset name inside such subgroup to
+                # see if that dataset name appears in the axis expression, and
+                # if so use the relative path 'subgroup/dataset'.
+                if isinstance(ax, str):
+                    try:
+                        found = False
+                        for child in group:
+                            try:
+                                if (
+                                    isinstance(group[child], h5py.Group)
+                                    and child.endswith("_variable_signal")
+                                ):
+                                    # scan the subgroup's children for a dataset name
+                                    for subchild in group[child]:
+                                        try:
+                                            if subchild in ax:
+                                                rel_axes.append(f"{child}/{subchild}")
+                                                found = True
+                                                break
+                                        except Exception:
+                                            pass
+                                    if found:
+                                        break
+                            except Exception:
+                                pass
+                        if found:
+                            continue
+                    except Exception:
+                        pass
+
+            rel_signals = []
+            for sig in signals:
+                try:
+                    if sig in group:
+                        rel_signals.append(sig)
+                        continue
+                except Exception:
+                    pass
+
+                # Substring match: if an existing child dataset name appears
+                # inside the signal expression, use that dataset name.
+                if isinstance(sig, str):
+                    try:
+                        matched_sig = False
+                        for child in group:
+                            try:
+                                if child in sig:
+                                    _ = group[child]
+                                    rel_signals.append(child)
+                                    matched_sig = True
+                                    break
+                            except Exception:
+                                pass
+                        if matched_sig:
+                            continue
+                    except Exception:
+                        pass
+
+                if isinstance(sig, str) and "/" in sig:
+                    try:
+                        _ = group[sig]
+                        rel_signals.append(sig)
+                        continue
+                    except Exception:
+                        pass
+
+                if isinstance(sig, str) and sig.startswith("/"):
+                    try:
+                        ds = self._h5_output_file[sig]
+                        prefix = group.name + "/"
+                        if sig.startswith(prefix):
+                            rel = sig[len(prefix) :]
+                            if rel:
+                                try:
+                                    _ = group[rel]
+                                    rel_signals.append(rel)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                # If not found directly, search one level down in any subgroup
+                # ending with '_variable_signal'. Since the signal may be an
+                # expression (e.g., 'detectorx*5+2'), check subgroup children
+                # and accept 'subgroup/dataset' when the dataset name appears
+                # inside the signal expression.
+                if isinstance(sig, str):
+                    try:
+                        found_sig = False
+                        for child in group:
+                            try:
+                                if (
+                                    isinstance(group[child], h5py.Group)
+                                    and child.endswith("_variable_signal")
+                                ):
+                                    for subchild in group[child]:
+                                        try:
+                                            if subchild in sig:
+                                                rel_signals.append(f"{child}/{subchild}")
+                                                found_sig = True
+                                                break
+                                        except Exception:
+                                            pass
+                                    if found_sig:
+                                        break
+                            except Exception:
+                                pass
+                        if found_sig:
+                            continue
+                    except Exception:
+                        pass
+
+            # Only set NXdata axes/signal if we found at least one axis and one signal
+            # If this is the primary stream and we didn't find axes or
+            # signals directly, try to find them in child groups named
+            # 'primary_1', 'primary_2', ... (these live under the primary
+            # group). Also check any '_variable_signal' subgroups there.
+            if stream == "primary" and (not rel_axes or not rel_signals):
+                rel_axes = []
+                rel_signals = []
+                group_primary = group["primary"]
+                try:
+                    for child in group_primary:
+                        try:
+                            if not isinstance(group_primary[child], h5py.Group):
+                                continue
+                            if not child.startswith("primary_"):
+                                continue
+                            subg = group_primary[child]
+                            # try axes first
+                            for ax in axes:
+                                if ax in rel_axes:
+                                    continue
+                                try:
+                                    if ax in subg:
+                                        rel_axes.append(f"{child}/{ax}")
+                                        continue
+                                except Exception:
+                                    pass
+                                if isinstance(ax, str):
+                                    try:
+                                        matched = False
+                                        for subchild in subg:
+                                            try:
+                                                if subchild in ax:
+                                                    _ = subg[subchild]
+                                                    rel_axes.append(f"{child}/{subchild}")
+                                                    matched = True
+                                                    break
+                                            except Exception:
+                                                pass
+                                        if matched:
+                                            continue
+                                    except Exception:
+                                        pass
+                                # look inside any _variable_signal subgroup under subg
+                                try:
+                                    for vs in subg:
+                                        try:
+                                            if (
+                                                isinstance(subg[vs], h5py.Group)
+                                                and vs.endswith("_variable_signal")
+                                            ):
+                                                for subchild in subg[vs]:
+                                                    try:
+                                                        if subchild in ax:
+                                                            rel_axes.append(f"{child}/{vs}/{subchild}")
+                                                            raise StopIteration
+                                                    except StopIteration:
+                                                        raise
+                                                    except Exception:
+                                                        pass
+                                        except StopIteration:
+                                            raise
+                                        except Exception:
+                                            pass
+                                except StopIteration:
+                                    break
+                                except Exception:
+                                    pass
+                            # try signals
+                            for sig in signals:
+                                if sig in rel_signals:
+                                    continue
+                                try:
+                                    if sig in subg:
+                                        rel_signals.append(f"{child}/{sig}")
+                                        continue
+                                except Exception:
+                                    pass
+                                if isinstance(sig, str):
+                                    try:
+                                        matched_sig = False
+                                        for subchild in subg:
+                                            try:
+                                                if subchild in sig:
+                                                    _ = subg[subchild]
+                                                    rel_signals.append(f"{child}/{subchild}")
+                                                    matched_sig = True
+                                                    break
+                                            except Exception:
+                                                pass
+                                        if matched_sig:
+                                            continue
+                                    except Exception:
+                                        pass
+                                try:
+                                    for vs in subg:
+                                        try:
+                                            if (
+                                                isinstance(subg[vs], h5py.Group)
+                                                and vs.endswith("_variable_signal")
+                                            ):
+                                                for subchild in subg[vs]:
+                                                    try:
+                                                        if subchild in sig:
+                                                            rel_signals.append(f"{child}/{vs}/{subchild}")
+                                                            raise StopIteration
+                                                    except StopIteration:
+                                                        raise
+                                                    except Exception:
+                                                        pass
+                                        except StopIteration:
+                                            raise
+                                        except Exception:
+                                            pass
+                                except StopIteration:
+                                    break
+                                except Exception:
+                                    pass
+                        except StopIteration:
+                            # early exit when found via variable_signal inner loop
+                            break
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            if rel_axes and rel_signals:
+                rel_axes = [
+                    (f"primary/{a}" if isinstance(a, str) and a.startswith("primary_") else a)
+                    for a in rel_axes
+                ]
+                rel_signals = [
+                    (f"primary/{s}" if isinstance(s, str) and s.startswith("primary_") else s)
+                    for s in rel_signals
+                ]
+                group.attrs["axes"] = rel_axes
+                group.attrs["signal"] = rel_signals[0]
+                if len(rel_signals) > 1:
+                    group.attrs["auxiliary_signals"] = rel_signals[1:]
 
         if self.do_nexus_output:
             self.make_nexus_structure()
