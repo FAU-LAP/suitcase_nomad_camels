@@ -1228,8 +1228,8 @@ class Serializer(event_model.DocumentRouter):
             if rel_axes and rel_signals:
                 group.attrs["axes"] = rel_axes
                 group.attrs["signal"] = rel_signals[0]
-                # if len(rel_signals) > 1:
-                #     group.attrs["auxiliary_signals"] = rel_signals[1:]
+                if len(rel_signals) > 1:
+                    group.attrs["auxiliary_signals"] = rel_signals[1:]
 
         if self.do_nexus_output:
             self.make_nexus_structure()
