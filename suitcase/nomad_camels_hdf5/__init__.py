@@ -17,10 +17,39 @@ from datetime import datetime as dt
 import databroker
 import databroker.core
 import copy
+import ast
 
 __version__ = get_versions()["version"]
 del get_versions
 
+
+def get_variables_from_expression(s):
+    """
+    Parses an expression and returns a set of all
+    variable names and numeric constants.
+    """
+    # 1. Parse the string into an Abstract Syntax Tree
+    #    We use 'eval' mode because it's a single expression.
+    try:
+        tree = ast.parse(s, mode='eval')
+    except SyntaxError:
+        print(f"Error: Invalid syntax '{s}'")
+        return set()
+
+    variables = set()
+    
+    # 2. "Walk" the tree to find all nodes
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            # ast.Name nodes are variables like 'var1', 'x', etc.
+            variables.add(node.id)
+        elif isinstance(node, ast.Constant):
+            # ast.Constant nodes are literals like 5, 1.2, 'hello'
+            # We check if it's a number, per your request.
+            if isinstance(node.value, (int, float)):
+                variables.add(node.value)
+                
+    return variables
 
 def same_until_last(a: str, b: str) -> bool:
     def normalize_base(path: str):
@@ -581,7 +610,7 @@ class Serializer(event_model.DocumentRouter):
                 self._stream_groups[stream_id] = self._data_entry.create_group(
                     stream_name
                 )
-                self._stream_groups[stream_id].attrs["NX_class"] = "NXdata"
+                self._stream_groups[stream_id].attrs["NX_class"] = "NXcollection"
             else:
                 self._stream_groups[stream_id] = self._data_entry[stream_name]
         if include_channel_links:
@@ -633,6 +662,7 @@ class Serializer(event_model.DocumentRouter):
         entry = self._h5_output_file.create_group(self._entry_name)
         self._entry = entry
         entry.attrs["NX_class"] = "NXcollection"
+        entry.attrs["default"] = "data"
         if "versions" in doc and set(doc["versions"].keys()) == {
             "bluesky",
             "ophyd",
@@ -807,7 +837,7 @@ class Serializer(event_model.DocumentRouter):
         recourse_entry_dict(entry, doc)
 
         self._data_entry = entry.create_group("data")
-        self._data_entry.attrs["NX_class"] = "NXdata"
+        self._data_entry.attrs["NX_class"] = "NXcollection"
         if uid is not None:
             doc["uid"] = uid
 
@@ -828,7 +858,7 @@ class Serializer(event_model.DocumentRouter):
             return
         else:
             stream_group = self._data_entry.create_group(stream_name)
-            stream_group.attrs["NX_class"] = "NXdata"
+            stream_group.attrs["NX_class"] = "NXcollection"
         self._stream_groups[doc["uid"]] = stream_group
         self._stream_names[stream_name] = doc["uid"]
         self._stream_metadata[doc["uid"]] = doc["data_keys"]
@@ -987,27 +1017,30 @@ class Serializer(event_model.DocumentRouter):
             self._h5_output_file.flush()
 
         self.close()
-
-    # def _find_deeper_path
     
     def _check_in_direct_group(self, group, path):
+        data_set_paths_used = []
         for key in group:
             if key in path:
-                return f"{group.name}/{path}"
+                data_set_paths_used.append(f"{group.name}/{key}")
+        return data_set_paths_used
     def _check_in_subreads_of_primary(self, group, stream, path):
+        data_set_paths_used = []
         if "primary" in group:
             primary = group["primary"]
             for key, item in primary.items():
                 if key.startswith(stream.split("/")[-1]):
                     for subkey in item:
                         if subkey in path:
-                            return f"{item.name}/{path}"
+                            data_set_paths_used.append(f"{item.name}/{subkey}")
+            return data_set_paths_used
     def _check_in_variable_signal(self, group, stream, path):
+        data_set_paths_used = []
         for key, item in group.items():
             if key.endswith("_variable_signal"):
                 for subkey in item:
                     if subkey in path:
-                        return f"{item.name}/{path}"
+                       data_set_paths_used.append(f"{item.name}/{subkey}")
         if "primary" in group:
             primary = group["primary"]
             for key, item in primary.items():
@@ -1016,92 +1049,284 @@ class Serializer(event_model.DocumentRouter):
                         if subkey.endswith("_variable_signal"):
                             for subsubkey in subitem:
                                 if subsubkey in path:
-                                    return f"{subitem.name}/{path}"
+                                    data_set_paths_used.append(f"{subitem.name}/{subsubkey}")
+        return data_set_paths_used
+    
+
+    def _check_single_group(self, group_to_check, search_strings):
+        """
+        Core logic to find matching datasets within a single group, without recursion.
+        This is a helper function for find_dataset_matches_in_group.
+        """
+        search_set = set(search_strings)
+        candidates = {}
+        
+        def build_path(parent_path, child_name):
+            return f"/{child_name}" if parent_path == "/" else f"{parent_path}/{child_name}"
+
+        for child_name in group_to_check.keys():
+            candidates[child_name] = build_path(group_to_check.name, child_name)
+
+        for child_name in group_to_check.keys():
+            if child_name.endswith("_variable_signal"):
+                child_obj = group_to_check.get(child_name)
+                if isinstance(child_obj, h5py.Group):
+                    for grandchild_name in child_obj.keys():
+                        grandchild_path = build_path(child_obj.name, grandchild_name)
+                        candidates[grandchild_name] = grandchild_path
+                    break 
+        
+        # --- FIX: Check for substring match in BOTH directions ---
+        # A match is valid if the dataset name is in the search string OR vice-versa.
+        is_viable = all(any(c_name in s or s in c_name for c_name in candidates) for s in search_set)
+        if not is_viable:
+            return []
+
+        unmatched_strings = search_set.copy()
+        candidate_pool = candidates.copy() 
+        resulting_paths = set()
+
+        while unmatched_strings:
+            best_candidate_name = None
+            strings_covered_by_best = set()
+            for c_name in candidate_pool:
+                # --- FIX: Check for substring match in BOTH directions ---
+                covered = {s for s in unmatched_strings if c_name in s or s in c_name}
+                if len(covered) > len(strings_covered_by_best):
+                    best_candidate_name = c_name
+                    strings_covered_by_best = covered
+            
+            if not best_candidate_name:
+                return []
+
+            resulting_paths.add(candidate_pool[best_candidate_name])
+            unmatched_strings -= strings_covered_by_best
+            del candidate_pool[best_candidate_name]
+
+        if not unmatched_strings:
+            return sorted(list(resulting_paths))
+        
+        return []
+
+    def find_dataset_matches_in_group(self, start_group, search_strings_a, search_strings_b):
+        """
+        Finds if a set of datasets exists that collectively contain all specified
+        search strings from two lists. It then returns the results as two dictionaries.
+
+        It first checks `start_group`. If no match for the combined list is found,
+        it looks for a subgroup "primary" and checks each group inside it.
+
+        Args:
+            start_group (h5py.Group): The h5py Group object to search within.
+            search_strings_a (list of str): The first list of substrings.
+            search_strings_b (list of str): The second list of substrings.
+
+        Returns:
+            tuple[dict[str, str], dict[str, str]]: A tuple of two dictionaries.
+                - The first maps strings from list A to their found dataset paths.
+                - The second maps strings from list B to their found dataset paths.
+                Returns ({}, {}) if no complete match is found.
+        """
+        combined_search_strings = search_strings_a + search_strings_b
+        if not combined_search_strings:
+            return {}, {}
+
+        def create_result_dicts(all_paths, list_a, list_b):
+            """Helper to map search strings to the paths where they were found."""
+            dict_a = {}
+            dict_b = {}
+            
+            for search_str in list_a:
+                for path in all_paths:
+                    dataset_name = path.split('/')[-1]
+                    # --- FIX: Check for substring match in BOTH directions ---
+                    if dataset_name in search_str or search_str in dataset_name:
+                        dict_a[search_str] = path
+                        break # Assign the first path that matches
+            
+            for search_str in list_b:
+                for path in all_paths:
+                    dataset_name = path.split('/')[-1]
+                    # --- FIX: Check for substring match in BOTH directions ---
+                    if dataset_name in search_str or search_str in dataset_name:
+                        dict_b[search_str] = path
+                        break # Assign the first path that matches
+
+            return dict_a, dict_b
+
+        # 1. Check the start_group itself.
+        initial_match_paths = self._check_single_group(start_group, combined_search_strings)
+        if initial_match_paths:
+            return create_result_dicts(initial_match_paths, search_strings_a, search_strings_b)
+
+        # 2. If that fails, look for a fallback "primary" group.
+        primary_group = start_group.get("primary")
+        if primary_group and isinstance(primary_group, h5py.Group):
+            for group_name in sorted(primary_group.keys()):
+                sub_group = primary_group.get(group_name)
+                if isinstance(sub_group, h5py.Group):
+                    sub_group_match_paths = self._check_single_group(sub_group, combined_search_strings)
+                    if sub_group_match_paths:
+                        return create_result_dicts(sub_group_match_paths, search_strings_a, search_strings_b)
+
+        # 3. If no matches were found.
+        return {}, {}
+
+    def compare_axes_and_signal_root_paths(self, axes_path, signal_paths):
+        unique_axes_paths  = []
+        for key, path in axes_path.items():
+            if isinstance(path, list):
+                for p in path:
+                    if "_variable_signal" in p:
+                        root_path = "/".join(p.split("/")[:-2])
+                    else:
+                        root_path = "/".join(p.split("/")[:-1])
+                    if root_path not in unique_axes_paths:
+                        unique_axes_paths.append(root_path)
+        unique_signal_paths  = []
+        for key, path in signal_paths.items():
+            if isinstance(path, list):
+                for p in path:
+                    if "_variable_signal" in p:
+                        root_path = "/".join(p.split("/")[:-2])
+                    else:
+                        root_path = "/".join(p.split("/")[:-1])
+                    if root_path not in unique_signal_paths:
+                        unique_signal_paths.append(root_path)
+        # Only keep axes and signal paths that are in unique_signal_paths and unique_axes_paths
+        common_root = list(set(unique_signal_paths) & set(unique_axes_paths))
+        # For now only allow a single same root
+        common_root = common_root[0] if common_root else None
+        # remove all paths that are not part of common_root
+        for key, path in axes_path.items():
+            if isinstance(path, list):
+                new_paths = []
+                for p in path:
+                    if "_variable_signal" in p:
+                        root_path = "/".join(p.split("/")[:-2])
+                    else:
+                        root_path = "/".join(p.split("/")[:-1])
+                    if root_path == common_root:
+                        new_paths.append(p)
+                axes_path[key] = new_paths
+        for key, path in signal_paths.items():
+            if isinstance(path, list):
+                new_paths = []
+                for p in path:
+                    if "_variable_signal" in p:
+                        root_path = "/".join(p.split("/")[:-2])
+                    else:
+                        root_path = "/".join(p.split("/")[:-1])
+                    if root_path == common_root:
+                        new_paths.append(p)
+                signal_paths[key] = new_paths
+        return axes_path, signal_paths
+
 
     def _check_axes_and_signal_exist(self, group, stream, axes_list, signal_list, plot_type):
         # check if axes is in group, make sure not to traverse down into subprotocol streams
         signal_present = []
-        signal_paths = []
+        signal_paths = {}
         for signal in signal_list:
             if signal_check := self._check_in_direct_group(group, signal):
                 signal_present.append(True)
-                signal_paths.append(signal_check[len(group.name)+1:])
-                continue
-            if signal_check := self._check_in_subreads_of_primary(group, stream, signal):
+                signal_paths[signal] = signal_check
+            elif signal_check := self._check_in_subreads_of_primary(group, stream, signal):
                 signal_present.append(True)
-                signal_paths.append(signal_check[len(group.name)+1:])
-                continue
-            if signal_check := self._check_in_variable_signal(group, stream, signal):
+                signal_paths[signal] = signal_check
+            elif signal_check := self._check_in_variable_signal(group, stream, signal):
                 signal_present.append(True)
-                signal_paths.append(signal_check[len(group.name)+1:])
-                continue
-            signal_present.append(False)
+                signal_paths[signal] = signal_check
+            else:
+                signal_present.append(False)
         if not all(signal_present):
             print(f"One of the Signals in {signal_list} not found in group {group.name} or sub groups")
             return None, None
-        # if len of axes and signal is the same, then they belong to each other pair-wise
-        if len(signal_list) == len(axes_list):
-            axes_present = []
-            axes_path = []
-            for i, signal_path in enumerate(signal_paths):
-                if "_variable_signal" not in signal_path:
-                    # split the signal at / and take everthing but the lat element
+        # # if len of axes and signal is the same, then they belong to each other pair-wise
+        # if len(signal_list) == len(axes_list):
+        #     axes_present = []
+        #     axes_path = {}
+        #     for i, (signal_key, signal_path) in enumerate(signal_paths.items()):
+        #         if isinstance(signal_path, list):
+        #             signal_path = signal_path[0]
+        #         if "_variable_signal" not in signal_path:
+        #             # split the signal at / and take everthing but the last element
                     
-                    new_signal_path = signal_path
-                    if "/" in signal_path:
-                        new_group_path = new_signal_path.split("/")[:-1]
-                        signal_group = group["/".join(new_group_path)]
-                    else:
-                        signal_group = group
+        #             new_signal_path = signal_path
+        #             if "/" in signal_path:
+        #                 parts = new_signal_path.split("/")
+        #                 signal_group = None
+
+        #                 # Try: remove last 1 token, then last 2, ... until something exists
+        #                 for i_part in range(len(parts) - 1, 0, -1):
+        #                     candidate = "/".join(parts[:i_part])
+        #                     found = group.get(candidate, default=None)
+        #                     if found is not None:
+        #                         signal_group = found
+        #                         break
+
+        #                 if signal_group is None:
+        #                     signal_group = group
+        #             else:
+        #                 signal_group = group
                     # If the signal group name does not contain _variable_signal the path is correct and we now check for axes, start in the hdf5 group that contains the signal, axis must be on this level or in the variables signal below. 
-                    axes = axes_list[i]
-                    if axes_check := self._check_in_direct_group(signal_group, axes):
-                        axes_present.append(True)
-                        axes_path.append(axes_check[len(group.name)+1:])
-                        continue
-                    if axes_check := self._check_in_subreads_of_primary(signal_group, stream, axes):
-                        axes_present.append(True)
-                        axes_path.append(axes_check[len(group.name)+1:])
-                        continue
-                    if axes_check := self._check_in_variable_signal(signal_group, stream, axes):
-                        axes_present.append(True)
-                        axes_path.append(axes_check[len(group.name)+1:])
-                        continue
-                    axes_present.append(False)
-            if all(axes_present) and all(signal_present):
+        signal_group = group # one can not know the correct signal_group before checking the axes paths
+        axes_present = []
+        axes_path = {}
+        for axes in axes_list:
+            if axes_check := self._check_in_direct_group(signal_group, axes):
+                axes_present.append(True)
+                axes_path[axes] = axes_check
+            elif axes_check := self._check_in_subreads_of_primary(signal_group, stream, axes):
+                axes_present.append(True)
+                axes_path[axes] = axes_check
+            elif axes_check := self._check_in_variable_signal(signal_group, stream, axes):
+                axes_present.append(True)
+                axes_path[axes] = axes_check
+            else:
+                axes_present.append(False)
+        if all(axes_present) and all(signal_present):
+            if plot_type == "1D":
+                rel_axes_path = axes_path[list(axes_path.keys())[0]]
+                rel_signal_path = signal_paths[list(signal_paths.keys())[0]]
+                self.compare_axes_and_signal_root_paths(axes_path, signal_paths)
+                # axes_path[list(axes_path.keys())[0]] = axes_compared_path
+                # signal_paths[list(signal_paths.keys())[0]] = signal_compared_path
                 return axes_path, signal_paths
-        elif len(signal_paths) == 1:
-            for signal_path in signal_paths:
-                if "_variable_signal" not in signal_path:
-                    # split the signal at / and take everthing but the lat element
-                    new_signal_path = signal_path
-                    if "/" in signal_path:
-                        new_group_path = new_signal_path.split("/")[:-1]
-                        signal_group = group["/".join(new_group_path)]
-                    else:
-                        signal_group = group
-                    # If the signal group name does not contain _variable_signal the path is correct and we now check for axes, start in the hdf5 group that contains the signal, axis must be on this level or in the variables signal below. 
-                    axes_present = []
-                    axes_path = []
-                    for axes in axes_list:
-                        if axes_check := self._check_in_direct_group(signal_group, axes):
-                            axes_present.append(True)
-                            axes_path.append(axes_check[len(group.name)+1:])
-                            continue
-                        if axes_check := self._check_in_subreads_of_primary(signal_group, stream, axes):
-                            axes_present.append(True)
-                            axes_path.append(axes_check[len(group.name)+1:])
-                            continue
-                        if axes_check := self._check_in_variable_signal(signal_group, stream, axes):
-                            axes_present.append(True)
-                            axes_path.append(axes_check[len(group.name)+1:])
-                            continue
-                        axes_present.append(False)
-                if all(axes_present) and all(signal_present):
-                    return axes_path, signal_paths
+            elif plot_type == "2D":
+                self.compare_axes_and_signal_root_paths(axes_path, signal_paths)
+                return axes_path, signal_paths
+        # elif len(signal_paths) == 1:
+        #     for signal_path in signal_paths:
+        #         if "_variable_signal" not in signal_path:
+        #             # split the signal at / and take everthing but the lat element
+        #             new_signal_path = signal_path
+        #             if "/" in signal_path:
+        #                 new_group_path = new_signal_path.split("/")[:-1]
+        #                 signal_group = group["/".join(new_group_path)]
+        #             else:
+        #                 signal_group = group
+        #             # If the signal group name does not contain _variable_signal the path is correct and we now check for axes, start in the hdf5 group that contains the signal, axis must be on this level or in the variables signal below. 
+        #             axes_present = []
+        #             axes_path = {}
+        #             for axes in axes_list:
+        #                 if axes_check := self._check_in_direct_group(signal_group, axes):
+        #                     axes_present.append(True)
+        #                     axes_path[axes] = axes_check
+        #                     continue
+        #                 if axes_check := self._check_in_subreads_of_primary(signal_group, stream, axes):
+        #                     axes_present.append(True)
+        #                     axes_path[axes] = axes_check
+        #                     continue
+        #                 if axes_check := self._check_in_variable_signal(signal_group, stream, axes):
+        #                     axes_present.append(True)
+        #                     axes_path[axes] = axes_check
+        #                     continue
+        #                 axes_present.append(False)
+        #         if all(axes_present) and all(signal_present):
+        #             return axes_path, signal_paths
 
 
-    
     def _make_stop_entry(self, doc):
         end_time = doc["time"]
         end_time = timestamp_to_ISO8601(end_time)
@@ -1148,9 +1373,13 @@ class Serializer(event_model.DocumentRouter):
             self._channel_links[ch].create_virtual_dataset("value_log", layout)
             self._channel_links[ch].create_virtual_dataset("timestamps", layout_time)
 
-        stream_axes = {}
-        stream_signals = {}
-        for plot in self._plot_data:
+        
+        for plot_index, plot in enumerate(self._plot_data):
+            full_namespace_list = list(plot.eva.namespace.keys())
+            cut_off_index = full_namespace_list.index("StartTime")
+            available_channel_names = full_namespace_list[cut_off_index :]
+            stream_axes = {}
+            stream_signals = {}
             if (
                 plot.stream_name in self._stream_names
                 or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names or plot.stream_name.replace("||subprotocol_stream||", "/") in self._stream_names
@@ -1165,71 +1394,204 @@ class Serializer(event_model.DocumentRouter):
                 axes = stream_axes[stream_name]
                 signals = stream_signals[stream_name]
                 group = self._stream_groups[self._stream_names[stream_name]]
-                if plot.x_name not in axes:
-                    axes.append(plot.x_name)
+                individual_variables_from_x_name = get_variables_from_expression(plot.x_name)
+                if individual_variables_from_x_name:
+                    for var in individual_variables_from_x_name:
+                        if var in available_channel_names:
+                            axes.append(var)
                 if hasattr(plot, "z_name"):
-                    if plot.y_name not in axes:
-                        axes.append(plot.y_name)
-                    if plot.z_name not in signals:
-                        signals.append(plot.z_name)
+                    plot_type = "2D"
+                    individual_variables_from_y_name = get_variables_from_expression(plot.y_name)
+                    if individual_variables_from_y_name:
+                        for var in individual_variables_from_y_name:
+                            if var in available_channel_names:
+                                axes.append(var)
+                    individual_variables_from_z_name = get_variables_from_expression(plot.z_name)
+                    if individual_variables_from_z_name:
+                        for var in individual_variables_from_z_name:
+                            if var in available_channel_names:
+                                signals.append(var)
                 else:
+                    plot_type = "1D"
                     for y in plot.y_names:
-                        if y not in signals:
-                            signals.append(y)
-                if not hasattr(plot, "liveFits") or not plot.liveFits:
+                        individual_variables_from_y_name = get_variables_from_expression(y)
+                        if individual_variables_from_y_name:
+                            for var in individual_variables_from_y_name:
+                                if var in available_channel_names:
+                                    signals.append(var)
+                check_result = self.find_dataset_matches_in_group(group, axes, signals)
+                # check_result = self._check_axes_and_signal_exist(group, stream_name, axes, signals, plot_type)
+                # check to see if the axes and signals are pure datasets or contain some arithmetic operation
+                if not check_result:
                     continue
-                fit_group = group.require_group("fits")
-                for fit in plot.liveFits:
-                    if not fit.results:
-                        continue
-                    fg = fit_group.require_group(fit.name)
-                    param_names = []
-                    param_values = []
-                    covars = []
-                    timestamps = []
-                    for t, res in fit.results.items():
-                        timestamps.append(float(t))
-                        if res.covar is None:
-                            covar = np.ones(
-                                (len(res.best_values), len(res.best_values))
-                            )
-                            covar *= np.nan
+                rel_axes, rel_signals = check_result
+                plot_group = group.create_group(f"plot_{plot_index+1}")
+                plot_group.attrs["NX_class"] = "NXdata"
+                group.attrs["default"] = f"plot_{plot_index+1}"
+                if plot_type == "1D":
+                    if plot.x_name in rel_axes:
+                        plot_group["_plot_data_axes"] = h5py.SoftLink(rel_axes[plot.x_name])
+                        plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
+                    else:
+                        print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
+                        import numexpr as ne
+                        data_context = {}
+                        for key, path_val in rel_axes.items():
+                            last_path_element = path_val.split("/")[-1]
+                            data_context[last_path_element] = self._h5_output_file[path_val][()]
+                        evaluated_data = ne.evaluate(plot.x_name, local_dict=data_context)
+                        plot_group["_plot_data_axes"] = evaluated_data
+                        plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
+                    # for key, path_val in rel_axes.items():
+                    #     last_path_element = path_val.split("/")[-1]
+                    #     if key != last_path_element:
+                    #         print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
+                    #         import numexpr as ne
+                    #         data_context = {}
+                    #         data_context[last_path_element] = self._h5_output_file[path_val][()]
+                    #         evaluated_data = ne.evaluate(key, local_dict=data_context)
+                    #         plot_group["_plot_data_axes"] = evaluated_data
+                    #         plot_group["_plot_data_axes"].attrs["long_name"] = key
+                    #     else:
+                    #         plot_group["_plot_data_axes"] = h5py.SoftLink(path_val)
+                    #         plot_group["_plot_data_axes"].attrs["long_name"] = key
+                    y_count = 0
+                    for y in plot.y_names:
+                        if y_count == 0:
+                            if y in rel_signals:
+                                plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[y])
+                                plot_group["_plot_data_signal"].attrs["long_name"] = y
+                            else:
+                                print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
+                                import numexpr as ne
+                                data_context = {}
+                                for key, path_val in rel_signals.items():
+                                    last_path_element = path_val.split("/")[-1]
+                                    data_context[last_path_element] = self._h5_output_file[path_val][()]
+                                evaluated_data = ne.evaluate(y, local_dict=data_context)
+                                plot_group["_plot_data_signal"] = evaluated_data
+                                plot_group["_plot_data_signal"].attrs["long_name"] = y
                         else:
-                            covar = res.covar
-                        covars.append(covar)
-                        if not param_names:
-                            param_names = res.model.param_names
-                        param_values.append(res.params)
-                    fg.attrs["param_names"] = param_names
-                    timestamps, covars, param_values = sort_by_list(
-                        timestamps, [covars, param_values]
-                    )
-                    # isos = []
-                    # for t in timestamps:
-                    #     isos.append(timestamp_to_ISO8601(t))
-                    fg["time"] = timestamps
-                    since = np.array(timestamps)
-                    since -= self._start_time
-                    fg["ElapsedTime"] = since
-                    fg["covariance"] = covars
-                    fg["covariance"].attrs["parameters"] = param_names[: len(covars[0])]
-                    param_values = get_param_dict(param_values)
-                    for p, v in param_values.items():
-                        fg[p] = v
-        for stream, axes in stream_axes.items():
-            if len(axes) == 2: # Check it its a 2D plot
-                plot_type = "2D"
-            elif len(axes) == 1:
-                plot_type = "1D"    
-            signals = stream_signals.get(stream, [])
-            group = self._stream_groups[self._stream_names[stream]]
-            check_result = self._check_axes_and_signal_exist(group, stream, axes, signals, plot_type)
-            rel_axes, rel_signals = check_result
-            if rel_axes and rel_signals:
-                group.attrs["axes"] = rel_axes
-                group.attrs["signal"] = rel_signals[0]
-                if len(rel_signals) > 1:
-                    group.attrs["auxiliary_signals"] = rel_signals[1:]
+                            if y in rel_signals:
+                                plot_group[f"_plot_data_signal_1"] = h5py.SoftLink(rel_signals[y])
+                                plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
+                            else:
+                                print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
+                                import numexpr as ne
+                                data_context = {}
+                                for key, path_val in rel_signals.items():
+                                    last_path_element = path_val.split("/")[-1]
+                                    data_context[last_path_element] = self._h5_output_file[path_val][()]
+                                evaluated_data = ne.evaluate(y, local_dict=data_context)
+                                plot_group[f"_plot_data_signal_1"] = evaluated_data
+                                plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
+                        y_count += 1
+
+                    # for key, path_val in rel_signals.items():
+                    #     last_path_element = path_val.split("/")[-1]
+                    #     if key != last_path_element:
+                    #         print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
+                    #         import numexpr as ne
+                    #         data_context = {}
+                    #         data_context[last_path_element] = self._h5_output_file[path_val][()]
+                    #         evaluated_data = ne.evaluate(key, local_dict=data_context)
+                    #         plot_group["_plot_data_signal"] = evaluated_data
+                    #         plot_group["_plot_data_signal"].attrs["long_name"] = key
+                    #     else:
+                    #         plot_group["_plot_data_signal"] = h5py.SoftLink(path_val)
+                    #         plot_group["_plot_data_signal"].attrs["long_name"] = key
+                    plot_group.attrs["axes"] = "_plot_data_axes"
+                    plot_group.attrs["signal"] = "_plot_data_signal"
+                    if len(plot.y_names) > 1:
+                        plot_group.attrs["auxiliary_signals"] = f"_plot_data_signal_1"
+                    import json
+                    plot_meta = {"x_axis": plot.x_name, "y_axis": plot.y_names, "stream": plot.stream_name, "plot_type": plot_type}
+                    plot_group.attrs["plot_metadata"] = json.dumps(plot_meta)
+                    
+                elif plot_type == "2D":
+                    for x_y_index, (key, path_val) in enumerate(rel_axes.items()):
+                        last_path_element = path_val.split("/")[-1]
+                        if key != last_path_element:
+                            print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
+                            import numexpr as ne
+                            data_context = {}
+                            data_context[last_path_element] = self._h5_output_file[path_val][()]
+                            evaluated_data = ne.evaluate(key, local_dict=data_context)
+                            plot_group[f"_plot_data_axes_{x_y_index}"] = evaluated_data
+                            plot_group[f"_plot_data_axes_{x_y_index}"].attrs["long_name"] = key
+                        else:
+                            plot_group[f"_plot_data_axes_{x_y_index}"] = h5py.SoftLink(path_val)
+                            plot_group[f"_plot_data_axes_{x_y_index}"].attrs["long_name"] = key
+                    for key, path_val in rel_signals.items():
+                        last_path_element = path_val.split("/")[-1]
+                        if key != last_path_element:
+                            print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
+                            import numexpr as ne
+                            data_context = {}
+                            data_context[last_path_element] = self._h5_output_file[path_val][()]
+                            evaluated_data = ne.evaluate(key, local_dict=data_context)
+                            plot_group["_plot_data_signal"] = evaluated_data
+                            plot_group["_plot_data_signal"].attrs["long_name"] = key                            
+                        else:
+                            plot_group["_plot_data_signal"] = h5py.SoftLink(path_val)   
+                            plot_group["_plot_data_signal"].attrs["long_name"] = key
+                    plot_group.attrs["axes"] = [f"_plot_data_axes_{i}" for i in range(len(rel_axes))]
+                    plot_group.attrs["signal"] = "_plot_data_signal"
+            
+            if not hasattr(plot, "liveFits") or not plot.liveFits:
+                continue                        
+            fit_group = group.require_group("fits")
+            for fit in plot.liveFits:
+                if not fit.results:
+                    continue
+                fg = fit_group.require_group(fit.name)
+                param_names = []
+                param_values = []
+                covars = []
+                timestamps = []
+                for t, res in fit.results.items():
+                    timestamps.append(float(t))
+                    if res.covar is None:
+                        covar = np.ones(
+                            (len(res.best_values), len(res.best_values))
+                        )
+                        covar *= np.nan
+                    else:
+                        covar = res.covar
+                    covars.append(covar)
+                    if not param_names:
+                        param_names = res.model.param_names
+                    param_values.append(res.params)
+                fg.attrs["param_names"] = param_names
+                timestamps, covars, param_values = sort_by_list(
+                    timestamps, [covars, param_values]
+                )
+                # isos = []
+                # for t in timestamps:
+                #     isos.append(timestamp_to_ISO8601(t))
+                fg["time"] = timestamps
+                since = np.array(timestamps)
+                since -= self._start_time
+                fg["ElapsedTime"] = since
+                fg["covariance"] = covars
+                fg["covariance"].attrs["parameters"] = param_names[: len(covars[0])]
+                param_values = get_param_dict(param_values)
+                for p, v in param_values.items():
+                    fg[p] = v
+        # for stream, axes in stream_axes.items():
+        #     if len(axes) == 2: # Check it its a 2D plot
+        #         plot_type = "2D"
+        #     elif len(axes) == 1:
+        #         plot_type = "1D"    
+        #     signals = stream_signals.get(stream, [])
+        #     group = self._stream_groups[self._stream_names[stream]]
+        #     check_result = self._check_axes_and_signal_exist(group, stream, axes, signals, plot_type)
+        #     rel_axes, rel_signals = check_result
+        #     if rel_axes and rel_signals:
+        #         group.attrs["axes"] = rel_axes
+        #         group.attrs["signal"] = rel_signals[0]
+        #         if len(rel_signals) > 1:
+        #             group.attrs["auxiliary_signals"] = rel_signals[1:]
 
         if self.do_nexus_output:
             self.make_nexus_structure()
