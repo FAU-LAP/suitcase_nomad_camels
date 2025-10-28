@@ -51,19 +51,6 @@ def get_variables_from_expression(s):
                 
     return variables
 
-def same_until_last(a: str, b: str) -> bool:
-    def normalize_base(path: str):
-        parts = [p for p in path.strip("/").split("/") if p]
-        if not parts:
-            return ()
-        # If the *penultimate* segment ends with "_variable_signal", drop last TWO
-        if len(parts) >= 2 and parts[-2].endswith("_variable_signal"):
-            return tuple(parts[:-2])
-        # Otherwise drop just the last segment
-        return tuple(parts[:-1])
-
-    return normalize_base(a) == normalize_base(b)
-
 def export(
     gen, directory, file_prefix="{uid}-", new_file_each=True, plot_data=None, **kwargs
 ):
@@ -1065,7 +1052,9 @@ class Serializer(event_model.DocumentRouter):
             return f"/{child_name}" if parent_path == "/" else f"{parent_path}/{child_name}"
 
         for child_name in group_to_check.keys():
-            candidates[child_name] = build_path(group_to_check.name, child_name)
+            # The _variable_signal itself should not be a candidate, only its children.
+            if not child_name.endswith("_variable_signal"):
+                candidates[child_name] = build_path(group_to_check.name, child_name)
 
         for child_name in group_to_check.keys():
             if child_name.endswith("_variable_signal"):
@@ -1382,7 +1371,7 @@ class Serializer(event_model.DocumentRouter):
             stream_signals = {}
             if (
                 plot.stream_name in self._stream_names
-                or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names or plot.stream_name.replace("||subprotocol_stream||", "/") in self._stream_names
+                or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names or plot.stream_name.replace("||subprotocol_stream||", "/") in self._stream_names or plot.stream_name.replace("||sub_stream||", "/").replace("||subprotocol_stream||", "/") in self._stream_names
             ) and hasattr(plot, "x_name"):
                 stream_name = plot.stream_name
                 if stream_name not in self._stream_names:
@@ -1432,7 +1421,7 @@ class Serializer(event_model.DocumentRouter):
                     if plot.x_name in rel_axes:
                         plot_group["_plot_data_axes"] = h5py.SoftLink(rel_axes[plot.x_name])
                         plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
-                    else:
+                    elif any(key in plot.x_name for key in rel_axes.keys()):
                         print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
                         import numexpr as ne
                         data_context = {}
@@ -1442,6 +1431,9 @@ class Serializer(event_model.DocumentRouter):
                         evaluated_data = ne.evaluate(plot.x_name, local_dict=data_context)
                         plot_group["_plot_data_axes"] = evaluated_data
                         plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
+                    else:
+                        print(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
+                        # raise ValueError(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                     # for key, path_val in rel_axes.items():
                     #     last_path_element = path_val.split("/")[-1]
                     #     if key != last_path_element:
@@ -1461,7 +1453,7 @@ class Serializer(event_model.DocumentRouter):
                             if y in rel_signals:
                                 plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[y])
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
-                            else:
+                            elif any(key in y for key in rel_signals.keys()):
                                 print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
                                 import numexpr as ne
                                 data_context = {}
@@ -1471,12 +1463,15 @@ class Serializer(event_model.DocumentRouter):
                                 evaluated_data = ne.evaluate(y, local_dict=data_context)
                                 plot_group["_plot_data_signal"] = evaluated_data
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
+                            else:
+                                print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
+                                # raise ValueError(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         else:
                             if y in rel_signals:
                                 plot_group[f"_plot_data_signal_1"] = h5py.SoftLink(rel_signals[y])
                                 plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
-                            else:
-                                print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
+                            elif any(key in y for key in rel_signals.keys()):
+                                print("y data name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
                                 import numexpr as ne
                                 data_context = {}
                                 for key, path_val in rel_signals.items():
@@ -1485,6 +1480,9 @@ class Serializer(event_model.DocumentRouter):
                                 evaluated_data = ne.evaluate(y, local_dict=data_context)
                                 plot_group[f"_plot_data_signal_1"] = evaluated_data
                                 plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
+                            else:
+                                print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
+                                # raise ValueError(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         y_count += 1
 
                     # for key, path_val in rel_signals.items():
@@ -1578,20 +1576,6 @@ class Serializer(event_model.DocumentRouter):
                 param_values = get_param_dict(param_values)
                 for p, v in param_values.items():
                     fg[p] = v
-        # for stream, axes in stream_axes.items():
-        #     if len(axes) == 2: # Check it its a 2D plot
-        #         plot_type = "2D"
-        #     elif len(axes) == 1:
-        #         plot_type = "1D"    
-        #     signals = stream_signals.get(stream, [])
-        #     group = self._stream_groups[self._stream_names[stream]]
-        #     check_result = self._check_axes_and_signal_exist(group, stream, axes, signals, plot_type)
-        #     rel_axes, rel_signals = check_result
-        #     if rel_axes and rel_signals:
-        #         group.attrs["axes"] = rel_axes
-        #         group.attrs["signal"] = rel_signals[0]
-        #         if len(rel_signals) > 1:
-        #             group.attrs["auxiliary_signals"] = rel_signals[1:]
 
         if self.do_nexus_output:
             self.make_nexus_structure()
