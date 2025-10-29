@@ -30,6 +30,8 @@ def get_variables_from_expression(s):
     """
     # 1. Parse the string into an Abstract Syntax Tree
     #    We use 'eval' mode because it's a single expression.
+    # Clean the string by replacing np.*() calls with *()
+    s = s.replace("np.", "")
     try:
         tree = ast.parse(s, mode='eval')
     except SyntaxError:
@@ -1005,40 +1007,6 @@ class Serializer(event_model.DocumentRouter):
 
         self.close()
     
-    def _check_in_direct_group(self, group, path):
-        data_set_paths_used = []
-        for key in group:
-            if key in path:
-                data_set_paths_used.append(f"{group.name}/{key}")
-        return data_set_paths_used
-    def _check_in_subreads_of_primary(self, group, stream, path):
-        data_set_paths_used = []
-        if "primary" in group:
-            primary = group["primary"]
-            for key, item in primary.items():
-                if key.startswith(stream.split("/")[-1]):
-                    for subkey in item:
-                        if subkey in path:
-                            data_set_paths_used.append(f"{item.name}/{subkey}")
-            return data_set_paths_used
-    def _check_in_variable_signal(self, group, stream, path):
-        data_set_paths_used = []
-        for key, item in group.items():
-            if key.endswith("_variable_signal"):
-                for subkey in item:
-                    if subkey in path:
-                       data_set_paths_used.append(f"{item.name}/{subkey}")
-        if "primary" in group:
-            primary = group["primary"]
-            for key, item in primary.items():
-                if key.startswith(stream):
-                    for subkey, subitem in item.items():
-                        if subkey.endswith("_variable_signal"):
-                            for subsubkey in subitem:
-                                if subsubkey in path:
-                                    data_set_paths_used.append(f"{subitem.name}/{subsubkey}")
-        return data_set_paths_used
-    
 
     def _check_single_group(self, group_to_check, search_strings):
         """
@@ -1052,7 +1020,6 @@ class Serializer(event_model.DocumentRouter):
             return f"/{child_name}" if parent_path == "/" else f"{parent_path}/{child_name}"
 
         for child_name in group_to_check.keys():
-            # The _variable_signal itself should not be a candidate, only its children.
             if not child_name.endswith("_variable_signal"):
                 candidates[child_name] = build_path(group_to_check.name, child_name)
 
@@ -1064,8 +1031,6 @@ class Serializer(event_model.DocumentRouter):
                         grandchild_path = build_path(child_obj.name, grandchild_name)
                         candidates[grandchild_name] = grandchild_path
                     break 
-        
-        # --- FIX: Check for substring match in BOTH directions ---
         # A match is valid if the dataset name is in the search string OR vice-versa.
         is_viable = all(any(c_name in s or s in c_name for c_name in candidates) for s in search_set)
         if not is_viable:
@@ -1161,161 +1126,6 @@ class Serializer(event_model.DocumentRouter):
         # 3. If no matches were found.
         return {}, {}
 
-    def compare_axes_and_signal_root_paths(self, axes_path, signal_paths):
-        unique_axes_paths  = []
-        for key, path in axes_path.items():
-            if isinstance(path, list):
-                for p in path:
-                    if "_variable_signal" in p:
-                        root_path = "/".join(p.split("/")[:-2])
-                    else:
-                        root_path = "/".join(p.split("/")[:-1])
-                    if root_path not in unique_axes_paths:
-                        unique_axes_paths.append(root_path)
-        unique_signal_paths  = []
-        for key, path in signal_paths.items():
-            if isinstance(path, list):
-                for p in path:
-                    if "_variable_signal" in p:
-                        root_path = "/".join(p.split("/")[:-2])
-                    else:
-                        root_path = "/".join(p.split("/")[:-1])
-                    if root_path not in unique_signal_paths:
-                        unique_signal_paths.append(root_path)
-        # Only keep axes and signal paths that are in unique_signal_paths and unique_axes_paths
-        common_root = list(set(unique_signal_paths) & set(unique_axes_paths))
-        # For now only allow a single same root
-        common_root = common_root[0] if common_root else None
-        # remove all paths that are not part of common_root
-        for key, path in axes_path.items():
-            if isinstance(path, list):
-                new_paths = []
-                for p in path:
-                    if "_variable_signal" in p:
-                        root_path = "/".join(p.split("/")[:-2])
-                    else:
-                        root_path = "/".join(p.split("/")[:-1])
-                    if root_path == common_root:
-                        new_paths.append(p)
-                axes_path[key] = new_paths
-        for key, path in signal_paths.items():
-            if isinstance(path, list):
-                new_paths = []
-                for p in path:
-                    if "_variable_signal" in p:
-                        root_path = "/".join(p.split("/")[:-2])
-                    else:
-                        root_path = "/".join(p.split("/")[:-1])
-                    if root_path == common_root:
-                        new_paths.append(p)
-                signal_paths[key] = new_paths
-        return axes_path, signal_paths
-
-
-    def _check_axes_and_signal_exist(self, group, stream, axes_list, signal_list, plot_type):
-        # check if axes is in group, make sure not to traverse down into subprotocol streams
-        signal_present = []
-        signal_paths = {}
-        for signal in signal_list:
-            if signal_check := self._check_in_direct_group(group, signal):
-                signal_present.append(True)
-                signal_paths[signal] = signal_check
-            elif signal_check := self._check_in_subreads_of_primary(group, stream, signal):
-                signal_present.append(True)
-                signal_paths[signal] = signal_check
-            elif signal_check := self._check_in_variable_signal(group, stream, signal):
-                signal_present.append(True)
-                signal_paths[signal] = signal_check
-            else:
-                signal_present.append(False)
-        if not all(signal_present):
-            print(f"One of the Signals in {signal_list} not found in group {group.name} or sub groups")
-            return None, None
-        # # if len of axes and signal is the same, then they belong to each other pair-wise
-        # if len(signal_list) == len(axes_list):
-        #     axes_present = []
-        #     axes_path = {}
-        #     for i, (signal_key, signal_path) in enumerate(signal_paths.items()):
-        #         if isinstance(signal_path, list):
-        #             signal_path = signal_path[0]
-        #         if "_variable_signal" not in signal_path:
-        #             # split the signal at / and take everthing but the last element
-                    
-        #             new_signal_path = signal_path
-        #             if "/" in signal_path:
-        #                 parts = new_signal_path.split("/")
-        #                 signal_group = None
-
-        #                 # Try: remove last 1 token, then last 2, ... until something exists
-        #                 for i_part in range(len(parts) - 1, 0, -1):
-        #                     candidate = "/".join(parts[:i_part])
-        #                     found = group.get(candidate, default=None)
-        #                     if found is not None:
-        #                         signal_group = found
-        #                         break
-
-        #                 if signal_group is None:
-        #                     signal_group = group
-        #             else:
-        #                 signal_group = group
-                    # If the signal group name does not contain _variable_signal the path is correct and we now check for axes, start in the hdf5 group that contains the signal, axis must be on this level or in the variables signal below. 
-        signal_group = group # one can not know the correct signal_group before checking the axes paths
-        axes_present = []
-        axes_path = {}
-        for axes in axes_list:
-            if axes_check := self._check_in_direct_group(signal_group, axes):
-                axes_present.append(True)
-                axes_path[axes] = axes_check
-            elif axes_check := self._check_in_subreads_of_primary(signal_group, stream, axes):
-                axes_present.append(True)
-                axes_path[axes] = axes_check
-            elif axes_check := self._check_in_variable_signal(signal_group, stream, axes):
-                axes_present.append(True)
-                axes_path[axes] = axes_check
-            else:
-                axes_present.append(False)
-        if all(axes_present) and all(signal_present):
-            if plot_type == "1D":
-                rel_axes_path = axes_path[list(axes_path.keys())[0]]
-                rel_signal_path = signal_paths[list(signal_paths.keys())[0]]
-                self.compare_axes_and_signal_root_paths(axes_path, signal_paths)
-                # axes_path[list(axes_path.keys())[0]] = axes_compared_path
-                # signal_paths[list(signal_paths.keys())[0]] = signal_compared_path
-                return axes_path, signal_paths
-            elif plot_type == "2D":
-                self.compare_axes_and_signal_root_paths(axes_path, signal_paths)
-                return axes_path, signal_paths
-        # elif len(signal_paths) == 1:
-        #     for signal_path in signal_paths:
-        #         if "_variable_signal" not in signal_path:
-        #             # split the signal at / and take everthing but the lat element
-        #             new_signal_path = signal_path
-        #             if "/" in signal_path:
-        #                 new_group_path = new_signal_path.split("/")[:-1]
-        #                 signal_group = group["/".join(new_group_path)]
-        #             else:
-        #                 signal_group = group
-        #             # If the signal group name does not contain _variable_signal the path is correct and we now check for axes, start in the hdf5 group that contains the signal, axis must be on this level or in the variables signal below. 
-        #             axes_present = []
-        #             axes_path = {}
-        #             for axes in axes_list:
-        #                 if axes_check := self._check_in_direct_group(signal_group, axes):
-        #                     axes_present.append(True)
-        #                     axes_path[axes] = axes_check
-        #                     continue
-        #                 if axes_check := self._check_in_subreads_of_primary(signal_group, stream, axes):
-        #                     axes_present.append(True)
-        #                     axes_path[axes] = axes_check
-        #                     continue
-        #                 if axes_check := self._check_in_variable_signal(signal_group, stream, axes):
-        #                     axes_present.append(True)
-        #                     axes_path[axes] = axes_check
-        #                     continue
-        #                 axes_present.append(False)
-        #         if all(axes_present) and all(signal_present):
-        #             return axes_path, signal_paths
-
-
     def _make_stop_entry(self, doc):
         end_time = doc["time"]
         end_time = timestamp_to_ISO8601(end_time)
@@ -1366,7 +1176,7 @@ class Serializer(event_model.DocumentRouter):
         for plot_index, plot in enumerate(self._plot_data):
             full_namespace_list = list(plot.eva.namespace.keys())
             cut_off_index = full_namespace_list.index("StartTime")
-            available_channel_names = full_namespace_list[cut_off_index :]
+            available_channel_names = full_namespace_list[cut_off_index :] # this could be changed to self._channel_names + the variables somehow
             stream_axes = {}
             stream_signals = {}
             if (
@@ -1409,8 +1219,6 @@ class Serializer(event_model.DocumentRouter):
                                 if var in available_channel_names:
                                     signals.append(var)
                 check_result = self.find_dataset_matches_in_group(group, axes, signals)
-                # check_result = self._check_axes_and_signal_exist(group, stream_name, axes, signals, plot_type)
-                # check to see if the axes and signals are pure datasets or contain some arithmetic operation
                 if not check_result:
                     continue
                 rel_axes, rel_signals = check_result
@@ -1428,25 +1236,12 @@ class Serializer(event_model.DocumentRouter):
                         for key, path_val in rel_axes.items():
                             last_path_element = path_val.split("/")[-1]
                             data_context[last_path_element] = self._h5_output_file[path_val][()]
-                        evaluated_data = ne.evaluate(plot.x_name, local_dict=data_context)
+                        cleaned_x = plot.x_name.replace("np.","") # remove np. to make it compatible with numexpr
+                        evaluated_data = ne.evaluate(cleaned_x, local_dict=data_context)
                         plot_group["_plot_data_axes"] = evaluated_data
                         plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
                     else:
                         print(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                        # raise ValueError(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                    # for key, path_val in rel_axes.items():
-                    #     last_path_element = path_val.split("/")[-1]
-                    #     if key != last_path_element:
-                    #         print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
-                    #         import numexpr as ne
-                    #         data_context = {}
-                    #         data_context[last_path_element] = self._h5_output_file[path_val][()]
-                    #         evaluated_data = ne.evaluate(key, local_dict=data_context)
-                    #         plot_group["_plot_data_axes"] = evaluated_data
-                    #         plot_group["_plot_data_axes"].attrs["long_name"] = key
-                    #     else:
-                    #         plot_group["_plot_data_axes"] = h5py.SoftLink(path_val)
-                    #         plot_group["_plot_data_axes"].attrs["long_name"] = key
                     y_count = 0
                     for y in plot.y_names:
                         if y_count == 0:
@@ -1460,12 +1255,12 @@ class Serializer(event_model.DocumentRouter):
                                 for key, path_val in rel_signals.items():
                                     last_path_element = path_val.split("/")[-1]
                                     data_context[last_path_element] = self._h5_output_file[path_val][()]
-                                evaluated_data = ne.evaluate(y, local_dict=data_context)
+                                cleaned_y = y.replace("np.","") # remove np. to make it compatible with numexpr
+                                evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
                                 plot_group["_plot_data_signal"] = evaluated_data
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
                             else:
                                 print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                                # raise ValueError(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         else:
                             if y in rel_signals:
                                 plot_group[f"_plot_data_signal_1"] = h5py.SoftLink(rel_signals[y])
@@ -1477,68 +1272,73 @@ class Serializer(event_model.DocumentRouter):
                                 for key, path_val in rel_signals.items():
                                     last_path_element = path_val.split("/")[-1]
                                     data_context[last_path_element] = self._h5_output_file[path_val][()]
-                                evaluated_data = ne.evaluate(y, local_dict=data_context)
+                                cleaned_y = y.replace("np.","") # remove np. to make it compatible with numexpr
+                                evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
                                 plot_group[f"_plot_data_signal_1"] = evaluated_data
                                 plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
                             else:
                                 print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                                # raise ValueError(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         y_count += 1
-
-                    # for key, path_val in rel_signals.items():
-                    #     last_path_element = path_val.split("/")[-1]
-                    #     if key != last_path_element:
-                    #         print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
-                    #         import numexpr as ne
-                    #         data_context = {}
-                    #         data_context[last_path_element] = self._h5_output_file[path_val][()]
-                    #         evaluated_data = ne.evaluate(key, local_dict=data_context)
-                    #         plot_group["_plot_data_signal"] = evaluated_data
-                    #         plot_group["_plot_data_signal"].attrs["long_name"] = key
-                    #     else:
-                    #         plot_group["_plot_data_signal"] = h5py.SoftLink(path_val)
-                    #         plot_group["_plot_data_signal"].attrs["long_name"] = key
                     plot_group.attrs["axes"] = "_plot_data_axes"
                     plot_group.attrs["signal"] = "_plot_data_signal"
                     if len(plot.y_names) > 1:
                         plot_group.attrs["auxiliary_signals"] = f"_plot_data_signal_1"
-                    import json
-                    plot_meta = {"x_axis": plot.x_name, "y_axis": plot.y_names, "stream": plot.stream_name, "plot_type": plot_type}
-                    plot_group.attrs["plot_metadata"] = json.dumps(plot_meta)
                     
                 elif plot_type == "2D":
-                    for x_y_index, (key, path_val) in enumerate(rel_axes.items()):
-                        last_path_element = path_val.split("/")[-1]
-                        if key != last_path_element:
-                            print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
-                            import numexpr as ne
-                            data_context = {}
+                    if plot.x_name in rel_axes:
+                        plot_group["_plot_data_axes_0"] = h5py.SoftLink(rel_axes[plot.x_name])
+                        plot_group["_plot_data_axes_0"].attrs["long_name"] = plot.x_name
+                    elif any(key in plot.x_name for key in rel_axes.keys()):
+                        print("X Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
+                        import numexpr as ne
+                        data_context = {}
+                        for key, path_val in rel_axes.items():
+                            last_path_element = path_val.split("/")[-1]
                             data_context[last_path_element] = self._h5_output_file[path_val][()]
-                            evaluated_data = ne.evaluate(key, local_dict=data_context)
-                            plot_group[f"_plot_data_axes_{x_y_index}"] = evaluated_data
-                            plot_group[f"_plot_data_axes_{x_y_index}"].attrs["long_name"] = key
-                        else:
-                            plot_group[f"_plot_data_axes_{x_y_index}"] = h5py.SoftLink(path_val)
-                            plot_group[f"_plot_data_axes_{x_y_index}"].attrs["long_name"] = key
-                    for key, path_val in rel_signals.items():
-                        last_path_element = path_val.split("/")[-1]
-                        if key != last_path_element:
-                            print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
-                            import numexpr as ne
-                            data_context = {}
+                        cleaned_x = plot.x_name.replace("np.","") # remove np. to make it compatible with numexpr
+                        evaluated_data = ne.evaluate(cleaned_x, local_dict=data_context)
+                        plot_group["_plot_data_axes_0"] = evaluated_data
+                        plot_group["_plot_data_axes_0"].attrs["long_name"] = plot.x_name
+                    else:
+                        print(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
+                    if plot.y_name in rel_axes:
+                        plot_group["_plot_data_axes_1"] = h5py.SoftLink(rel_axes[plot.y_name])
+                        plot_group["_plot_data_axes_1"].attrs["long_name"] = plot.y_name
+                    elif any(key in plot.y_name for key in rel_axes.keys()):
+                        print("Y Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
+                        import numexpr as ne
+                        data_context = {}
+                        for key, path_val in rel_axes.items():
+                            last_path_element = path_val.split("/")[-1]
                             data_context[last_path_element] = self._h5_output_file[path_val][()]
-                            evaluated_data = ne.evaluate(key, local_dict=data_context)
-                            plot_group["_plot_data_signal"] = evaluated_data
-                            plot_group["_plot_data_signal"].attrs["long_name"] = key                            
-                        else:
-                            plot_group["_plot_data_signal"] = h5py.SoftLink(path_val)   
-                            plot_group["_plot_data_signal"].attrs["long_name"] = key
-                    plot_group.attrs["axes"] = [f"_plot_data_axes_{i}" for i in range(len(rel_axes))]
+                        cleaned_y = plot.y_name.replace("np.","") # remove np. to make it compatible with numexpr
+                        evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
+                        plot_group["_plot_data_axes_1"] = evaluated_data
+                        plot_group["_plot_data_axes_1"].attrs["long_name"] = plot.y_name
+                    else:
+                        print(f"The y data {plot.y_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
+                    if plot.z_name in rel_signals:
+                        plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[plot.z_name])
+                        plot_group["_plot_data_signal"].attrs["long_name"] = plot.z_name
+                    elif any(key in plot.z_name for key in rel_signals.keys()):
+                        print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
+                        import numexpr as ne
+                        data_context = {}
+                        for key, path_val in rel_signals.items():
+                            last_path_element = path_val.split("/")[-1]
+                            data_context[last_path_element] = self._h5_output_file[path_val][()]
+                        cleaned_z = plot.z_name.replace("np.","") # remove np. to make it compatible with numexpr
+                        evaluated_data = ne.evaluate(cleaned_z, local_dict=data_context)
+                        plot_group["_plot_data_signal"] = evaluated_data
+                        plot_group["_plot_data_signal"].attrs["long_name"] = plot.z_name
+                    else:
+                        print(f"The z data {plot.z_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
+                    plot_group.attrs["axes"] = ["_plot_data_axes_0", "_plot_data_axes_1"]
                     plot_group.attrs["signal"] = "_plot_data_signal"
             
             if not hasattr(plot, "liveFits") or not plot.liveFits:
                 continue                        
-            fit_group = group.require_group("fits")
+            fit_group = plot_group.require_group("fit")
             for fit in plot.liveFits:
                 if not fit.results:
                     continue
