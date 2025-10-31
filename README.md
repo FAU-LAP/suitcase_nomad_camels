@@ -12,6 +12,10 @@ pip install suitcase-nomad-camels-hdf5
 
 # Changelog
 
+### 1.1.0
+Fixes:
+- Fixed broken resolving of aliases
+
 ### 1.0.0
 Major restructuring of the way plots are added to the measurement data.
 Now adds a `plot_n` where `n` is the number of the plot to each (nested) data group it was created in. This means plots of subprotocols are now where the subprotocol data is saved. Each plot (NXdata) entry contains the required x, y (and z) data. If it is simply a plot of a measured channel it is an HDF5 SoftLink. If it is contains an arithmetic operation like adding multiple channels or dividing the read data by some value, the newly calculated data is saved as a new dataset in the plot entry. This now enables users to immediately view every plot they defined in CAMELS directly in the HDF5 file.
