@@ -18,6 +18,8 @@ import databroker
 import databroker.core
 import copy
 import ast
+import json
+from nomad_camels.utility import load_save_functions
 
 __version__ = get_versions()["version"]
 del get_versions
@@ -1248,6 +1250,7 @@ class Serializer(event_model.DocumentRouter):
                             if y in rel_signals:
                                 plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[y])
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
+                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[y]
                             elif any(key in y for key in rel_signals.keys()):
                                 print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
                                 import numexpr as ne
@@ -1259,12 +1262,14 @@ class Serializer(event_model.DocumentRouter):
                                 evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
                                 plot_group["_plot_data_signal"] = evaluated_data
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
+                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[y]
                             else:
                                 print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         else:
                             if y in rel_signals:
-                                plot_group[f"_plot_data_signal_1"] = h5py.SoftLink(rel_signals[y])
-                                plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
+                                plot_group[f"_plot_data_signal_{y_count}"] = h5py.SoftLink(rel_signals[y])
+                                plot_group[f"_plot_data_signal_{y_count}"].attrs["long_name"] = y
+                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[y]
                             elif any(key in y for key in rel_signals.keys()):
                                 print("y data name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
                                 import numexpr as ne
@@ -1274,15 +1279,20 @@ class Serializer(event_model.DocumentRouter):
                                     data_context[last_path_element] = self._h5_output_file[path_val][()]
                                 cleaned_y = y.replace("np.","") # remove np. to make it compatible with numexpr
                                 evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
-                                plot_group[f"_plot_data_signal_1"] = evaluated_data
-                                plot_group[f"_plot_data_signal_1"].attrs["long_name"] = y
+                                plot_group[f"_plot_data_signal_{y_count}"] = evaluated_data
+                                plot_group[f"_plot_data_signal_{y_count}"].attrs["long_name"] = y
+                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[y]
                             else:
                                 print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         y_count += 1
                     plot_group.attrs["axes"] = "_plot_data_axes"
                     plot_group.attrs["signal"] = "_plot_data_signal"
-                    if len(plot.y_names) > 1:
-                        plot_group.attrs["auxiliary_signals"] = f"_plot_data_signal_1"
+                    # Add a list of auxiliary signals if there are more than one y data
+                    if y_count > 1:
+                        aux_signals = []
+                        for i in range(1, y_count):
+                            aux_signals.append(f"_plot_data_signal_{i}")
+                        plot_group.attrs["auxiliary_signals"] = aux_signals
                     
                 elif plot_type == "2D":
                     if plot.x_name in rel_axes:
@@ -1339,7 +1349,7 @@ class Serializer(event_model.DocumentRouter):
             if not hasattr(plot, "liveFits") or not plot.liveFits:
                 continue                        
             fit_group = plot_group.require_group("fit")
-            for fit in plot.liveFits:
+            for fit_index, fit in enumerate(plot.liveFits):
                 if not fit.results:
                     continue
                 fg = fit_group.require_group(fit.name)
@@ -1376,6 +1386,8 @@ class Serializer(event_model.DocumentRouter):
                 param_values = get_param_dict(param_values)
                 for p, v in param_values.items():
                     fg[p] = v
+                fg.attrs["y_axes_index"] = plot.y_axes[fit.y]
+                fg.attrs["plot_metadata"] = json.dumps(plot.fits[fit_index])
 
         if self.do_nexus_output:
             self.make_nexus_structure()
