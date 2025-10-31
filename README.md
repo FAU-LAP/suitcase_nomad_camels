@@ -11,7 +11,9 @@ pip install suitcase-nomad-camels-hdf5
 
 
 # Changelog
-
+### 1.2.0
+Fixes:
+- Fixed broken 2D plots
 ### 1.1.0
 Fixes:
 - Fixed broken resolving of aliases

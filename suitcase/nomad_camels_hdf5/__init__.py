@@ -1179,10 +1179,6 @@ class Serializer(event_model.DocumentRouter):
             cut_off_index = full_namespace_list.index("StartTime")
             available_channel_names = full_namespace_list[cut_off_index :] # this could be changed to self._channel_names + the variables somehow
             # Replace the keys of the plot.y_axes dict with the evaluated aliases
-            for key in list(plot.y_axes.keys()):
-                new_key = plot.eva.exchange_aliases(key)
-                if new_key != key:
-                    plot.y_axes[new_key] = plot.y_axes.pop(key)
             stream_axes = {}
             stream_signals = {}
             if (
@@ -1223,6 +1219,10 @@ class Serializer(event_model.DocumentRouter):
                             if var in available_channel_names:
                                 signals.append(var)
                 else:
+                    for key in list(plot.y_axes.keys()):
+                        new_key = plot.eva.exchange_aliases(key)
+                        if new_key != key:
+                            plot.y_axes[new_key] = plot.y_axes.pop(key)
                     plot_type = "1D"
                     # Resolve all the aliases in y_names
                     for i, y in enumerate(plot.y_names):
