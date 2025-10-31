@@ -1178,6 +1178,11 @@ class Serializer(event_model.DocumentRouter):
             full_namespace_list = list(plot.eva.namespace.keys())
             cut_off_index = full_namespace_list.index("StartTime")
             available_channel_names = full_namespace_list[cut_off_index :] # this could be changed to self._channel_names + the variables somehow
+            # Replace the keys of the plot.y_axes dict with the evaluated aliases
+            for key in list(plot.y_axes.keys()):
+                new_key = plot.eva.exchange_aliases(key)
+                if new_key != key:
+                    plot.y_axes[new_key] = plot.y_axes.pop(key)
             stream_axes = {}
             stream_signals = {}
             if (
@@ -1194,6 +1199,8 @@ class Serializer(event_model.DocumentRouter):
                 axes = stream_axes[stream_name]
                 signals = stream_signals[stream_name]
                 group = self._stream_groups[self._stream_names[stream_name]]
+                # Resolve aliases in plot.x_name
+                plot.x_name = plot.eva.exchange_aliases(plot.x_name)
                 individual_variables_from_x_name = get_variables_from_expression(plot.x_name)
                 if individual_variables_from_x_name:
                     for var in individual_variables_from_x_name:
@@ -1201,11 +1208,15 @@ class Serializer(event_model.DocumentRouter):
                             axes.append(var)
                 if hasattr(plot, "z_name"):
                     plot_type = "2D"
+                    # Resolve aliases in plot.y_name
+                    plot.y_name = plot.eva.exchange_aliases(plot.y_name)
                     individual_variables_from_y_name = get_variables_from_expression(plot.y_name)
                     if individual_variables_from_y_name:
                         for var in individual_variables_from_y_name:
                             if var in available_channel_names:
                                 axes.append(var)
+                    # Resolve aliases in plot.z_name
+                    plot.z_name = plot.eva.exchange_aliases(plot.z_name)
                     individual_variables_from_z_name = get_variables_from_expression(plot.z_name)
                     if individual_variables_from_z_name:
                         for var in individual_variables_from_z_name:
@@ -1213,6 +1224,9 @@ class Serializer(event_model.DocumentRouter):
                                 signals.append(var)
                 else:
                     plot_type = "1D"
+                    # Resolve all the aliases in y_names
+                    for i, y in enumerate(plot.y_names):
+                        plot.y_names[i] = plot.eva.exchange_aliases(y)
                     for y in plot.y_names:
                         individual_variables_from_y_name = get_variables_from_expression(y)
                         if individual_variables_from_y_name:
@@ -1249,7 +1263,7 @@ class Serializer(event_model.DocumentRouter):
                             if y in rel_signals:
                                 plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[y])
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
-                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[y]
+                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
                             elif any(key in y for key in rel_signals.keys()):
                                 print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
                                 import numexpr as ne
@@ -1261,14 +1275,14 @@ class Serializer(event_model.DocumentRouter):
                                 evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
                                 plot_group["_plot_data_signal"] = evaluated_data
                                 plot_group["_plot_data_signal"].attrs["long_name"] = y
-                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[y]
+                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
                             else:
                                 print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         else:
                             if y in rel_signals:
                                 plot_group[f"_plot_data_signal_{y_count}"] = h5py.SoftLink(rel_signals[y])
                                 plot_group[f"_plot_data_signal_{y_count}"].attrs["long_name"] = y
-                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[y]
+                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
                             elif any(key in y for key in rel_signals.keys()):
                                 print("y data name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
                                 import numexpr as ne
@@ -1280,7 +1294,7 @@ class Serializer(event_model.DocumentRouter):
                                 evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
                                 plot_group[f"_plot_data_signal_{y_count}"] = evaluated_data
                                 plot_group[f"_plot_data_signal_{y_count}"].attrs["long_name"] = y
-                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[y]
+                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
                             else:
                                 print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
                         y_count += 1
