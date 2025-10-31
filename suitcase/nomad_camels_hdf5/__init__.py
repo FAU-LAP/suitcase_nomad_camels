@@ -19,7 +19,6 @@ import databroker.core
 import copy
 import ast
 import json
-from nomad_camels.utility import load_save_functions
 
 __version__ = get_versions()["version"]
 del get_versions
