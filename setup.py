@@ -42,6 +42,7 @@ setup(
     name="suitcase-nomad-camels-hdf5",
     version="1.3.1",
     # cmdclass=versioneer.get_cmdclass(),
+    description="A suitcase to write NOMAD CAMELS measurement data to HDF5 files",
     long_description=readme,
     long_description_content_type="text/markdown",
     packages=["suitcase.nomad_camels_hdf5", "suitcase.nomad_camels_hdf5.tests"],
