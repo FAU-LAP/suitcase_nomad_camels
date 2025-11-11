@@ -11,6 +11,18 @@ pip install suitcase-nomad-camels-hdf5
 
 
 # Changelog
+
+### 1.3.2
+
+
+### 1.3.1
+Fixes:
+- Fixed current values plots when saving data to file at the end of a run
+
+### 1.3.0
+Fixes:
+- Fixed missing dependency on numexpr
+
 ### 1.2.0
 Fixes:
 - Fixed broken 2D plots
