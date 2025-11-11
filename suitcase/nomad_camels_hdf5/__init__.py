@@ -1175,6 +1175,8 @@ class Serializer(event_model.DocumentRouter):
 
         
         for plot_index, plot in enumerate(self._plot_data):
+            if not hasattr(plot, "x_name"):
+                continue
             full_namespace_list = list(plot.eva.namespace.keys())
             cut_off_index = full_namespace_list.index("StartTime")
             available_channel_names = full_namespace_list[cut_off_index :] # this could be changed to self._channel_names + the variables somehow
