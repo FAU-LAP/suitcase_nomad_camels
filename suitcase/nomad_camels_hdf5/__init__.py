@@ -847,7 +847,7 @@ class Serializer(event_model.DocumentRouter):
             self._stream_groups[doc["uid"]] = stream_name
             return
         else:
-            stream_group = self._data_entry.create_group(stream_name)
+            stream_group = self._data_entry.require_group(stream_name)
             stream_group.attrs["NX_class"] = "NXcollection"
         self._stream_groups[doc["uid"]] = stream_group
         self._stream_names[stream_name] = doc["uid"]
@@ -1008,125 +1008,91 @@ class Serializer(event_model.DocumentRouter):
 
         self.close()
     
+  
+    def _get_possible_entry_paths(self, initial_group, entry_name:str):
+        possible_entry_name_paths = []
+        if entry_name in initial_group:
+            possible_entry_name_paths.append([entry_name, initial_group[entry_name].name, initial_group[entry_name].shape])
+        if "primary" in initial_group:
+            # Check to see if entry_name is in a primary sub stream:
+            for sub_primary_group in initial_group["primary"]:
+                # do not include paths that start with "Subprotocol" after the initial_group name
+                if initial_group.name.split("/")[-1] == "data":
+                    if not initial_group["primary"][sub_primary_group].name[len(initial_group["primary"].name):].startswith("/Subprotocol_") and not initial_group["primary"][sub_primary_group].name[len(initial_group["primary"].name):].startswith("/primary/Subprotocol_") and entry_name in initial_group["primary"][sub_primary_group]:
+                        possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][entry_name].name,initial_group["primary"][sub_primary_group][entry_name].shape])
+                    # Check if the entry_name is found in the _variable_signal entrys
+                    for variable_entry in initial_group["primary"][sub_primary_group]:
+                        if variable_entry.endswith("_variable_signal"):
+                            if entry_name in initial_group["primary"][sub_primary_group][variable_entry]:
+                                possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].shape])          
+                else:
+                    stream_name = initial_group.name.split("/")[-1]
+                    if initial_group["primary"][sub_primary_group].name[len(initial_group["primary"].name):].startswith(f"/{stream_name}_") and entry_name in initial_group["primary"][sub_primary_group]:
+                        possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][entry_name].name,initial_group["primary"][sub_primary_group][entry_name].shape])
+                    # Check if the entry_name is found in the _variable_signal entrys
+                    for variable_entry in initial_group["primary"][sub_primary_group]:
+                        if variable_entry.endswith("_variable_signal"):
+                            if entry_name in initial_group["primary"][sub_primary_group][variable_entry]:
+                                possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].shape])
 
-    def _check_single_group(self, group_to_check, search_strings):
-        """
-        Core logic to find matching datasets within a single group, without recursion.
-        This is a helper function for find_dataset_matches_in_group.
-        """
-        search_set = set(search_strings)
-        candidates = {}
+        for variable_entry in initial_group:
+            if variable_entry.endswith("_variable_signal"):
+                if entry_name in initial_group[variable_entry]:
+                    possible_entry_name_paths.append([entry_name, initial_group[variable_entry][entry_name].name, initial_group[variable_entry][entry_name].shape])
+        return possible_entry_name_paths
+    
+    def _find_paths_in_group(self, initial_group, axes:list, signals:list):
+        # Get the correct data paths for axes and signals
+        # Get the possible paths for axes and signals
+        axes_paths = []
+        for ax in axes:
+            axes_paths.append(self._get_possible_entry_paths(initial_group, ax))
+        signals_paths = []
+        for signal in signals:
+            signals_paths.append(self._get_possible_entry_paths(initial_group, signal))
+        # Use the data shape to make sure they actually match. 
+        # Find a shape that is present in both axes and signals lists
+        ax_data_shapes = []
+        for ax in axes_paths:
+            inter_ax_data_shapes = set()
+            for ax_found_path_data in ax:
+                    # ax_data_shapes.append(ax_found_path_data[2])
+                    inter_ax_data_shapes.add(ax_found_path_data[2])
+            ax_data_shapes.append(inter_ax_data_shapes)
+        ax_data_shapes = set.intersection(*ax_data_shapes)
+        # get the common data shape within the possible axes data set
+
+        signals_data_shape = []
+        for signal in signals_paths:
+            inter_signal_data_shapes = set()
+            for signal_found_path_data in signal:
+                # signals_data_shape.append(signal_found_path_data[2])
+                inter_signal_data_shapes.add(signal_found_path_data[2])
+            signals_data_shape.append(inter_signal_data_shapes)
+        signals_data_shape = set.intersection(*signals_data_shape) 
+        # take the first matching data shape, as we can not know which one is correct
+        common_data_shapes = list(set(ax_data_shapes) & set(signals_data_shape))[0]
+        correct_ax_paths = {}
+        for ax in axes_paths:
+            for ax_found_path_data in ax:
+                if ax_found_path_data[2] == common_data_shapes:
+                    correct_ax_paths[ax_found_path_data[0]] = ax_found_path_data[1]
+        correct_signals_paths = {}
+        for signal in signals_paths:
+            for signal_found_path_data in signal:
+                if signal_found_path_data[2] == common_data_shapes:
+                    correct_signals_paths[signal_found_path_data[0]] = signal_found_path_data[1]
+        return correct_ax_paths, correct_signals_paths
+
+
         
-        def build_path(parent_path, child_name):
-            return f"/{child_name}" if parent_path == "/" else f"{parent_path}/{child_name}"
-
-        for child_name in group_to_check.keys():
-            if not child_name.endswith("_variable_signal"):
-                candidates[child_name] = build_path(group_to_check.name, child_name)
-
-        for child_name in group_to_check.keys():
-            if child_name.endswith("_variable_signal"):
-                child_obj = group_to_check.get(child_name)
-                if isinstance(child_obj, h5py.Group):
-                    for grandchild_name in child_obj.keys():
-                        grandchild_path = build_path(child_obj.name, grandchild_name)
-                        candidates[grandchild_name] = grandchild_path
-                    break 
-        # A match is valid if the dataset name is in the search string OR vice-versa.
-        is_viable = all(any(c_name in s or s in c_name for c_name in candidates) for s in search_set)
-        if not is_viable:
-            return []
-
-        unmatched_strings = search_set.copy()
-        candidate_pool = candidates.copy() 
-        resulting_paths = set()
-
-        while unmatched_strings:
-            best_candidate_name = None
-            strings_covered_by_best = set()
-            for c_name in candidate_pool:
-                # --- FIX: Check for substring match in BOTH directions ---
-                covered = {s for s in unmatched_strings if c_name in s or s in c_name}
-                if len(covered) > len(strings_covered_by_best):
-                    best_candidate_name = c_name
-                    strings_covered_by_best = covered
-            
-            if not best_candidate_name:
-                return []
-
-            resulting_paths.add(candidate_pool[best_candidate_name])
-            unmatched_strings -= strings_covered_by_best
-            del candidate_pool[best_candidate_name]
-
-        if not unmatched_strings:
-            return sorted(list(resulting_paths))
         
-        return []
 
-    def find_dataset_matches_in_group(self, start_group, search_strings_a, search_strings_b):
-        """
-        Finds if a set of datasets exists that collectively contain all specified
-        search strings from two lists. It then returns the results as two dictionaries.
+                        
 
-        It first checks `start_group`. If no match for the combined list is found,
-        it looks for a subgroup "primary" and checks each group inside it.
 
-        Args:
-            start_group (h5py.Group): The h5py Group object to search within.
-            search_strings_a (list of str): The first list of substrings.
-            search_strings_b (list of str): The second list of substrings.
 
-        Returns:
-            tuple[dict[str, str], dict[str, str]]: A tuple of two dictionaries.
-                - The first maps strings from list A to their found dataset paths.
-                - The second maps strings from list B to their found dataset paths.
-                Returns ({}, {}) if no complete match is found.
-        """
-        combined_search_strings = search_strings_a + search_strings_b
-        if not combined_search_strings:
-            return {}, {}
-
-        def create_result_dicts(all_paths, list_a, list_b):
-            """Helper to map search strings to the paths where they were found."""
-            dict_a = {}
-            dict_b = {}
-            
-            for search_str in list_a:
-                for path in all_paths:
-                    dataset_name = path.split('/')[-1]
-                    # --- FIX: Check for substring match in BOTH directions ---
-                    if dataset_name in search_str or search_str in dataset_name:
-                        dict_a[search_str] = path
-                        break # Assign the first path that matches
-            
-            for search_str in list_b:
-                for path in all_paths:
-                    dataset_name = path.split('/')[-1]
-                    # --- FIX: Check for substring match in BOTH directions ---
-                    if dataset_name in search_str or search_str in dataset_name:
-                        dict_b[search_str] = path
-                        break # Assign the first path that matches
-
-            return dict_a, dict_b
-
-        # 1. Check the start_group itself.
-        initial_match_paths = self._check_single_group(start_group, combined_search_strings)
-        if initial_match_paths:
-            return create_result_dicts(initial_match_paths, search_strings_a, search_strings_b)
-
-        # 2. If that fails, look for a fallback "primary" group.
-        primary_group = start_group.get("primary")
-        if primary_group and isinstance(primary_group, h5py.Group):
-            for group_name in sorted(primary_group.keys()):
-                sub_group = primary_group.get(group_name)
-                if isinstance(sub_group, h5py.Group):
-                    sub_group_match_paths = self._check_single_group(sub_group, combined_search_strings)
-                    if sub_group_match_paths:
-                        return create_result_dicts(sub_group_match_paths, search_strings_a, search_strings_b)
-
-        # 3. If no matches were found.
-        return {}, {}
-
+    
     def _make_stop_entry(self, doc):
         end_time = doc["time"]
         end_time = timestamp_to_ISO8601(end_time)
@@ -1235,7 +1201,7 @@ class Serializer(event_model.DocumentRouter):
                             for var in individual_variables_from_y_name:
                                 if var in available_channel_names:
                                     signals.append(var)
-                check_result = self.find_dataset_matches_in_group(group, axes, signals)
+                check_result = self._find_paths_in_group(group, axes, signals)
                 if not check_result:
                     continue
                 rel_axes, rel_signals = check_result
