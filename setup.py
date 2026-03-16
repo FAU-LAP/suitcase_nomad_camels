@@ -40,7 +40,7 @@ with open(path.join(here, "requirements.txt")) as requirements_file:
 
 setup(
     name="suitcase-nomad-camels-hdf5",
-    version="1.3.1",
+    version="1.3.2",
     # cmdclass=versioneer.get_cmdclass(),
     description="A suitcase to write NOMAD CAMELS measurement data to HDF5 files",
     long_description=readme,

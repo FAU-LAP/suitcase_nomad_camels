@@ -13,7 +13,9 @@ pip install suitcase-nomad-camels-hdf5
 # Changelog
 
 ### 1.3.2
-
+Fixes:
+- Refactored the way the datasets for plots are found. SHould be much more stable now.
+- Fixed missing support for numpy and const functions in plots
 
 ### 1.3.1
 Fixes:
