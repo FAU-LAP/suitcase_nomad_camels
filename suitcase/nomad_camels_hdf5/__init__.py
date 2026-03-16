@@ -19,6 +19,11 @@ import databroker.core
 import copy
 import ast
 import json
+import scipy.constants as const
+
+base_namespace = {"numpy": np, "np": np, "time": 0, "const": const}
+# Add all numpy functions to the base namespace
+base_namespace.update({name: getattr(np, name) for name in np.__all__})
 
 __version__ = get_versions()["version"]
 del get_versions
@@ -34,13 +39,13 @@ def get_variables_from_expression(s):
     # Clean the string by replacing np.*() calls with *()
     s = s.replace("np.", "")
     try:
-        tree = ast.parse(s, mode='eval')
+        tree = ast.parse(s, mode="eval")
     except SyntaxError:
         print(f"Error: Invalid syntax '{s}'")
         return set()
 
     variables = set()
-    
+
     # 2. "Walk" the tree to find all nodes
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -51,8 +56,9 @@ def get_variables_from_expression(s):
             # We check if it's a number, per your request.
             if isinstance(node.value, (int, float)):
                 variables.add(node.value)
-                
+
     return variables
+
 
 def export(
     gen, directory, file_prefix="{uid}-", new_file_each=True, plot_data=None, **kwargs
@@ -323,7 +329,7 @@ class FileManager:
         ):
             if isinstance(abs_file_path, Path):
                 abs_file_path = abs_file_path.as_posix()
-            if abs_file_path.endswith(f"_{i-1}{self.file_extension}"):
+            if abs_file_path.endswith(f"_{i - 1}{self.file_extension}"):
                 abs_file_path = abs_file_path.replace(
                     f"_{i - 1}{self.file_extension}", f"_{i}{self.file_extension}"
                 )
@@ -360,7 +366,7 @@ class FileManager:
         if isinstance(file_settings["name"], str) and "Xhours" in file_settings["name"]:
             i = int(file_settings["name"].split("_Xhours_")[-1].split(".")[-2])
             file_settings["name"] = file_settings["name"].replace(
-                f"_Xhours_{i}.", f"_Xhours_{i+1}."
+                f"_Xhours_{i}.", f"_Xhours_{i + 1}."
             )
         else:
             file_settings["name"] = (
@@ -1007,41 +1013,115 @@ class Serializer(event_model.DocumentRouter):
             self._h5_output_file.flush()
 
         self.close()
-    
-  
-    def _get_possible_entry_paths(self, initial_group, entry_name:str):
+
+    def _get_possible_entry_paths(self, initial_group, entry_name: str):
         possible_entry_name_paths = []
         if entry_name in initial_group:
-            possible_entry_name_paths.append([entry_name, initial_group[entry_name].name, initial_group[entry_name].shape])
+            possible_entry_name_paths.append(
+                [
+                    entry_name,
+                    initial_group[entry_name].name,
+                    initial_group[entry_name].shape,
+                ]
+            )
         if "primary" in initial_group:
             # Check to see if entry_name is in a primary sub stream:
             for sub_primary_group in initial_group["primary"]:
                 # do not include paths that start with "Subprotocol" after the initial_group name
                 if initial_group.name.split("/")[-1] == "data":
-                    if not initial_group["primary"][sub_primary_group].name[len(initial_group["primary"].name):].startswith("/Subprotocol_") and not initial_group["primary"][sub_primary_group].name[len(initial_group["primary"].name):].startswith("/primary/Subprotocol_") and entry_name in initial_group["primary"][sub_primary_group]:
-                        possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][entry_name].name,initial_group["primary"][sub_primary_group][entry_name].shape])
+                    if (
+                        not initial_group["primary"][sub_primary_group]
+                        .name[len(initial_group["primary"].name) :]
+                        .startswith("/Subprotocol_")
+                        and not initial_group["primary"][sub_primary_group]
+                        .name[len(initial_group["primary"].name) :]
+                        .startswith("/primary/Subprotocol_")
+                        and entry_name in initial_group["primary"][sub_primary_group]
+                    ):
+                        possible_entry_name_paths.append(
+                            [
+                                entry_name,
+                                initial_group["primary"][sub_primary_group][
+                                    entry_name
+                                ].name,
+                                initial_group["primary"][sub_primary_group][
+                                    entry_name
+                                ].shape,
+                            ]
+                        )
                     # Check if the entry_name is found in the _variable_signal entrys
                     for variable_entry in initial_group["primary"][sub_primary_group]:
                         if variable_entry.endswith("_variable_signal"):
-                            if entry_name in initial_group["primary"][sub_primary_group][variable_entry]:
-                                possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].shape])          
+                            if (
+                                entry_name
+                                in initial_group["primary"][sub_primary_group][
+                                    variable_entry
+                                ]
+                            ):
+                                possible_entry_name_paths.append(
+                                    [
+                                        entry_name,
+                                        initial_group["primary"][sub_primary_group][
+                                            variable_entry
+                                        ][entry_name].name,
+                                        initial_group["primary"][sub_primary_group][
+                                            variable_entry
+                                        ][entry_name].shape,
+                                    ]
+                                )
                 else:
                     stream_name = initial_group.name.split("/")[-1]
-                    if initial_group["primary"][sub_primary_group].name[len(initial_group["primary"].name):].startswith(f"/{stream_name}_") and entry_name in initial_group["primary"][sub_primary_group]:
-                        possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][entry_name].name,initial_group["primary"][sub_primary_group][entry_name].shape])
+                    if (
+                        initial_group["primary"][sub_primary_group]
+                        .name[len(initial_group["primary"].name) :]
+                        .startswith(f"/{stream_name}_")
+                        and entry_name in initial_group["primary"][sub_primary_group]
+                    ):
+                        possible_entry_name_paths.append(
+                            [
+                                entry_name,
+                                initial_group["primary"][sub_primary_group][
+                                    entry_name
+                                ].name,
+                                initial_group["primary"][sub_primary_group][
+                                    entry_name
+                                ].shape,
+                            ]
+                        )
                     # Check if the entry_name is found in the _variable_signal entrys
                     for variable_entry in initial_group["primary"][sub_primary_group]:
                         if variable_entry.endswith("_variable_signal"):
-                            if entry_name in initial_group["primary"][sub_primary_group][variable_entry]:
-                                possible_entry_name_paths.append([entry_name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].name, initial_group["primary"][sub_primary_group][variable_entry][entry_name].shape])
+                            if (
+                                entry_name
+                                in initial_group["primary"][sub_primary_group][
+                                    variable_entry
+                                ]
+                            ):
+                                possible_entry_name_paths.append(
+                                    [
+                                        entry_name,
+                                        initial_group["primary"][sub_primary_group][
+                                            variable_entry
+                                        ][entry_name].name,
+                                        initial_group["primary"][sub_primary_group][
+                                            variable_entry
+                                        ][entry_name].shape,
+                                    ]
+                                )
 
         for variable_entry in initial_group:
             if variable_entry.endswith("_variable_signal"):
                 if entry_name in initial_group[variable_entry]:
-                    possible_entry_name_paths.append([entry_name, initial_group[variable_entry][entry_name].name, initial_group[variable_entry][entry_name].shape])
+                    possible_entry_name_paths.append(
+                        [
+                            entry_name,
+                            initial_group[variable_entry][entry_name].name,
+                            initial_group[variable_entry][entry_name].shape,
+                        ]
+                    )
         return possible_entry_name_paths
-    
-    def _find_paths_in_group(self, initial_group, axes:list, signals:list):
+
+    def _find_paths_in_group(self, initial_group, axes: list, signals: list):
         # Get the correct data paths for axes and signals
         # Get the possible paths for axes and signals
         axes_paths = []
@@ -1050,14 +1130,14 @@ class Serializer(event_model.DocumentRouter):
         signals_paths = []
         for signal in signals:
             signals_paths.append(self._get_possible_entry_paths(initial_group, signal))
-        # Use the data shape to make sure they actually match. 
+        # Use the data shape to make sure they actually match.
         # Find a shape that is present in both axes and signals lists
         ax_data_shapes = []
         for ax in axes_paths:
             inter_ax_data_shapes = set()
             for ax_found_path_data in ax:
-                    # ax_data_shapes.append(ax_found_path_data[2])
-                    inter_ax_data_shapes.add(ax_found_path_data[2])
+                # ax_data_shapes.append(ax_found_path_data[2])
+                inter_ax_data_shapes.add(ax_found_path_data[2])
             ax_data_shapes.append(inter_ax_data_shapes)
         ax_data_shapes = set.intersection(*ax_data_shapes)
         # get the common data shape within the possible axes data set
@@ -1069,7 +1149,7 @@ class Serializer(event_model.DocumentRouter):
                 # signals_data_shape.append(signal_found_path_data[2])
                 inter_signal_data_shapes.add(signal_found_path_data[2])
             signals_data_shape.append(inter_signal_data_shapes)
-        signals_data_shape = set.intersection(*signals_data_shape) 
+        signals_data_shape = set.intersection(*signals_data_shape)
         # take the first matching data shape, as we can not know which one is correct
         common_data_shapes = list(set(ax_data_shapes) & set(signals_data_shape))[0]
         correct_ax_paths = {}
@@ -1081,18 +1161,11 @@ class Serializer(event_model.DocumentRouter):
         for signal in signals_paths:
             for signal_found_path_data in signal:
                 if signal_found_path_data[2] == common_data_shapes:
-                    correct_signals_paths[signal_found_path_data[0]] = signal_found_path_data[1]
+                    correct_signals_paths[signal_found_path_data[0]] = (
+                        signal_found_path_data[1]
+                    )
         return correct_ax_paths, correct_signals_paths
 
-
-        
-        
-
-                        
-
-
-
-    
     def _make_stop_entry(self, doc):
         end_time = doc["time"]
         end_time = timestamp_to_ISO8601(end_time)
@@ -1138,238 +1211,407 @@ class Serializer(event_model.DocumentRouter):
                 counts_per_stream[stream] += count
             self._channel_links[ch].create_virtual_dataset("value_log", layout)
             self._channel_links[ch].create_virtual_dataset("timestamps", layout_time)
-
-        
-        for plot_index, plot in enumerate(self._plot_data):
-            if not hasattr(plot, "x_name"):
-                continue
-            full_namespace_list = list(plot.eva.namespace.keys())
-            cut_off_index = full_namespace_list.index("StartTime")
-            available_channel_names = full_namespace_list[cut_off_index :] # this could be changed to self._channel_names + the variables somehow
-            # Replace the keys of the plot.y_axes dict with the evaluated aliases
-            stream_axes = {}
-            stream_signals = {}
-            if (
-                plot.stream_name in self._stream_names
-                or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names or plot.stream_name.replace("||subprotocol_stream||", "/") in self._stream_names or plot.stream_name.replace("||sub_stream||", "/").replace("||subprotocol_stream||", "/") in self._stream_names
-            ) and hasattr(plot, "x_name"):
-                stream_name = plot.stream_name
-                if stream_name not in self._stream_names:
-                    stream_name = stream_name.replace("||sub_stream||", "/")
-                    stream_name = stream_name.replace("||subprotocol_stream||", "/")
-                if stream_name not in stream_axes:
-                    stream_axes[stream_name] = []
-                    stream_signals[stream_name] = []
-                axes = stream_axes[stream_name]
-                signals = stream_signals[stream_name]
-                group = self._stream_groups[self._stream_names[stream_name]]
-                # Resolve aliases in plot.x_name
-                plot.x_name = plot.eva.exchange_aliases(plot.x_name)
-                individual_variables_from_x_name = get_variables_from_expression(plot.x_name)
-                if individual_variables_from_x_name:
-                    for var in individual_variables_from_x_name:
-                        if var in available_channel_names:
-                            axes.append(var)
-                if hasattr(plot, "z_name"):
-                    plot_type = "2D"
-                    # Resolve aliases in plot.y_name
-                    plot.y_name = plot.eva.exchange_aliases(plot.y_name)
-                    individual_variables_from_y_name = get_variables_from_expression(plot.y_name)
-                    if individual_variables_from_y_name:
-                        for var in individual_variables_from_y_name:
+        try:
+            for plot_index, plot in enumerate(self._plot_data):
+                if not hasattr(plot, "x_name"):
+                    continue
+                full_namespace_list = list(plot.eva.namespace.keys())
+                cut_off_index = full_namespace_list.index("StartTime")
+                available_channel_names = full_namespace_list[
+                    cut_off_index:
+                ]  # this could be changed to self._channel_names + the variables somehow
+                # Replace the keys of the plot.y_axes dict with the evaluated aliases
+                stream_axes = {}
+                stream_signals = {}
+                if (
+                    plot.stream_name in self._stream_names
+                    or plot.stream_name.replace("||sub_stream||", "/") in self._stream_names
+                    or plot.stream_name.replace("||subprotocol_stream||", "/")
+                    in self._stream_names
+                    or plot.stream_name.replace("||sub_stream||", "/").replace(
+                        "||subprotocol_stream||", "/"
+                    )
+                    in self._stream_names
+                ) and hasattr(plot, "x_name"):
+                    stream_name = plot.stream_name
+                    if stream_name not in self._stream_names:
+                        stream_name = stream_name.replace("||sub_stream||", "/")
+                        stream_name = stream_name.replace("||subprotocol_stream||", "/")
+                    if stream_name not in stream_axes:
+                        stream_axes[stream_name] = []
+                        stream_signals[stream_name] = []
+                    axes = stream_axes[stream_name]
+                    signals = stream_signals[stream_name]
+                    group = self._stream_groups[self._stream_names[stream_name]]
+                    # Resolve aliases in plot.x_name
+                    plot.x_name = plot.eva.exchange_aliases(plot.x_name)
+                    individual_variables_from_x_name = get_variables_from_expression(
+                        plot.x_name
+                    )
+                    if individual_variables_from_x_name:
+                        for var in individual_variables_from_x_name:
                             if var in available_channel_names:
                                 axes.append(var)
-                    # Resolve aliases in plot.z_name
-                    plot.z_name = plot.eva.exchange_aliases(plot.z_name)
-                    individual_variables_from_z_name = get_variables_from_expression(plot.z_name)
-                    if individual_variables_from_z_name:
-                        for var in individual_variables_from_z_name:
-                            if var in available_channel_names:
-                                signals.append(var)
-                else:
-                    for key in list(plot.y_axes.keys()):
-                        new_key = plot.eva.exchange_aliases(key)
-                        if new_key != key:
-                            plot.y_axes[new_key] = plot.y_axes.pop(key)
-                    plot_type = "1D"
-                    # Resolve all the aliases in y_names
-                    for i, y in enumerate(plot.y_names):
-                        plot.y_names[i] = plot.eva.exchange_aliases(y)
-                    for y in plot.y_names:
-                        individual_variables_from_y_name = get_variables_from_expression(y)
+                    if hasattr(plot, "z_name"):
+                        plot_type = "2D"
+                        # Resolve aliases in plot.y_name
+                        plot.y_name = plot.eva.exchange_aliases(plot.y_name)
+                        individual_variables_from_y_name = get_variables_from_expression(
+                            plot.y_name
+                        )
                         if individual_variables_from_y_name:
                             for var in individual_variables_from_y_name:
                                 if var in available_channel_names:
-                                    signals.append(var)
-                check_result = self._find_paths_in_group(group, axes, signals)
-                if not check_result:
-                    continue
-                rel_axes, rel_signals = check_result
-                plot_group = group.create_group(f"plot_{plot_index+1}")
-                plot_group.attrs["NX_class"] = "NXdata"
-                group.attrs["default"] = f"plot_{plot_index+1}"
-                if plot_type == "1D":
-                    if plot.x_name in rel_axes:
-                        plot_group["_plot_data_axes"] = h5py.SoftLink(rel_axes[plot.x_name])
-                        plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
-                    elif any(key in plot.x_name for key in rel_axes.keys()):
-                        print("Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
-                        import numexpr as ne
-                        data_context = {}
-                        for key, path_val in rel_axes.items():
-                            last_path_element = path_val.split("/")[-1]
-                            data_context[last_path_element] = self._h5_output_file[path_val][()]
-                        cleaned_x = plot.x_name.replace("np.","") # remove np. to make it compatible with numexpr
-                        evaluated_data = ne.evaluate(cleaned_x, local_dict=data_context)
-                        plot_group["_plot_data_axes"] = evaluated_data
-                        plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
-                    else:
-                        print(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                    y_count = 0
-                    for y in plot.y_names:
-                        if y_count == 0:
-                            if y in rel_signals:
-                                plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[y])
-                                plot_group["_plot_data_signal"].attrs["long_name"] = y
-                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
-                            elif any(key in y for key in rel_signals.keys()):
-                                print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
-                                import numexpr as ne
-                                data_context = {}
-                                for key, path_val in rel_signals.items():
-                                    last_path_element = path_val.split("/")[-1]
-                                    data_context[last_path_element] = self._h5_output_file[path_val][()]
-                                cleaned_y = y.replace("np.","") # remove np. to make it compatible with numexpr
-                                evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
-                                plot_group["_plot_data_signal"] = evaluated_data
-                                plot_group["_plot_data_signal"].attrs["long_name"] = y
-                                plot_group["_plot_data_signal"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
-                            else:
-                                print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                        else:
-                            if y in rel_signals:
-                                plot_group[f"_plot_data_signal_{y_count}"] = h5py.SoftLink(rel_signals[y])
-                                plot_group[f"_plot_data_signal_{y_count}"].attrs["long_name"] = y
-                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
-                            elif any(key in y for key in rel_signals.keys()):
-                                print("y data name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
-                                import numexpr as ne
-                                data_context = {}
-                                for key, path_val in rel_signals.items():
-                                    last_path_element = path_val.split("/")[-1]
-                                    data_context[last_path_element] = self._h5_output_file[path_val][()]
-                                cleaned_y = y.replace("np.","") # remove np. to make it compatible with numexpr
-                                evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
-                                plot_group[f"_plot_data_signal_{y_count}"] = evaluated_data
-                                plot_group[f"_plot_data_signal_{y_count}"].attrs["long_name"] = y
-                                plot_group[f"_plot_data_signal_{y_count}"].attrs["y_axes_index"] = plot.y_axes[plot.eva.exchange_aliases(y)]
-                            else:
-                                print(f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                        y_count += 1
-                    plot_group.attrs["axes"] = "_plot_data_axes"
-                    plot_group.attrs["signal"] = "_plot_data_signal"
-                    # Add a list of auxiliary signals if there are more than one y data
-                    if y_count > 1:
-                        aux_signals = []
-                        for i in range(1, y_count):
-                            aux_signals.append(f"_plot_data_signal_{i}")
-                        plot_group.attrs["auxiliary_signals"] = aux_signals
-                    
-                elif plot_type == "2D":
-                    if plot.x_name in rel_axes:
-                        plot_group["_plot_data_axes_0"] = h5py.SoftLink(rel_axes[plot.x_name])
-                        plot_group["_plot_data_axes_0"].attrs["long_name"] = plot.x_name
-                    elif any(key in plot.x_name for key in rel_axes.keys()):
-                        print("X Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
-                        import numexpr as ne
-                        data_context = {}
-                        for key, path_val in rel_axes.items():
-                            last_path_element = path_val.split("/")[-1]
-                            data_context[last_path_element] = self._h5_output_file[path_val][()]
-                        cleaned_x = plot.x_name.replace("np.","") # remove np. to make it compatible with numexpr
-                        evaluated_data = ne.evaluate(cleaned_x, local_dict=data_context)
-                        plot_group["_plot_data_axes_0"] = evaluated_data
-                        plot_group["_plot_data_axes_0"].attrs["long_name"] = plot.x_name
-                    else:
-                        print(f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                    if plot.y_name in rel_axes:
-                        plot_group["_plot_data_axes_1"] = h5py.SoftLink(rel_axes[plot.y_name])
-                        plot_group["_plot_data_axes_1"].attrs["long_name"] = plot.y_name
-                    elif any(key in plot.y_name for key in rel_axes.keys()):
-                        print("Y Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression")
-                        import numexpr as ne
-                        data_context = {}
-                        for key, path_val in rel_axes.items():
-                            last_path_element = path_val.split("/")[-1]
-                            data_context[last_path_element] = self._h5_output_file[path_val][()]
-                        cleaned_y = plot.y_name.replace("np.","") # remove np. to make it compatible with numexpr
-                        evaluated_data = ne.evaluate(cleaned_y, local_dict=data_context)
-                        plot_group["_plot_data_axes_1"] = evaluated_data
-                        plot_group["_plot_data_axes_1"].attrs["long_name"] = plot.y_name
-                    else:
-                        print(f"The y data {plot.y_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                    if plot.z_name in rel_signals:
-                        plot_group["_plot_data_signal"] = h5py.SoftLink(rel_signals[plot.z_name])
-                        plot_group["_plot_data_signal"].attrs["long_name"] = plot.z_name
-                    elif any(key in plot.z_name for key in rel_signals.keys()):
-                        print("Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression")
-                        import numexpr as ne
-                        data_context = {}
-                        for key, path_val in rel_signals.items():
-                            last_path_element = path_val.split("/")[-1]
-                            data_context[last_path_element] = self._h5_output_file[path_val][()]
-                        cleaned_z = plot.z_name.replace("np.","") # remove np. to make it compatible with numexpr
-                        evaluated_data = ne.evaluate(cleaned_z, local_dict=data_context)
-                        plot_group["_plot_data_signal"] = evaluated_data
-                        plot_group["_plot_data_signal"].attrs["long_name"] = plot.z_name
-                    else:
-                        print(f"The z data {plot.z_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol.")
-                    plot_group.attrs["axes"] = ["_plot_data_axes_0", "_plot_data_axes_1"]
-                    plot_group.attrs["signal"] = "_plot_data_signal"
-            
-            if not hasattr(plot, "liveFits") or not plot.liveFits:
-                continue                        
-            fit_group = plot_group.require_group("fit")
-            for fit_index, fit in enumerate(plot.liveFits):
-                if not fit.results:
-                    continue
-                fg = fit_group.require_group(fit.name)
-                param_names = []
-                param_values = []
-                covars = []
-                timestamps = []
-                for t, res in fit.results.items():
-                    timestamps.append(float(t))
-                    if res.covar is None:
-                        covar = np.ones(
-                            (len(res.best_values), len(res.best_values))
+                                    axes.append(var)
+                        # Resolve aliases in plot.z_name
+                        plot.z_name = plot.eva.exchange_aliases(plot.z_name)
+                        individual_variables_from_z_name = get_variables_from_expression(
+                            plot.z_name
                         )
-                        covar *= np.nan
+                        if individual_variables_from_z_name:
+                            for var in individual_variables_from_z_name:
+                                if var in available_channel_names:
+                                    signals.append(var)
                     else:
-                        covar = res.covar
-                    covars.append(covar)
-                    if not param_names:
-                        param_names = res.model.param_names
-                    param_values.append(res.params)
-                fg.attrs["param_names"] = param_names
-                timestamps, covars, param_values = sort_by_list(
-                    timestamps, [covars, param_values]
-                )
-                # isos = []
-                # for t in timestamps:
-                #     isos.append(timestamp_to_ISO8601(t))
-                fg["time"] = timestamps
-                since = np.array(timestamps)
-                since -= self._start_time
-                fg["ElapsedTime"] = since
-                fg["covariance"] = covars
-                fg["covariance"].attrs["parameters"] = param_names[: len(covars[0])]
-                param_values = get_param_dict(param_values)
-                for p, v in param_values.items():
-                    fg[p] = v
-                fg.attrs["y_axes_index"] = plot.y_axes[fit.y]
-                fg.attrs["plot_metadata"] = json.dumps(plot.fits[fit_index])
+                        for key in list(plot.y_axes.keys()):
+                            new_key = plot.eva.exchange_aliases(key)
+                            if new_key != key:
+                                plot.y_axes[new_key] = plot.y_axes.pop(key)
+                        plot_type = "1D"
+                        # Resolve all the aliases in y_names
+                        for i, y in enumerate(plot.y_names):
+                            plot.y_names[i] = plot.eva.exchange_aliases(y)
+                        for y in plot.y_names:
+                            individual_variables_from_y_name = (
+                                get_variables_from_expression(y)
+                            )
+                            if individual_variables_from_y_name:
+                                for var in individual_variables_from_y_name:
+                                    if var in available_channel_names:
+                                        signals.append(var)
+                    check_result = self._find_paths_in_group(group, axes, signals)
+                    if not check_result:
+                        continue
+                    rel_axes, rel_signals = check_result
+                    plot_group = group.create_group(f"plot_{plot_index + 1}")
+                    plot_group.attrs["NX_class"] = "NXdata"
+                    group.attrs["default"] = f"plot_{plot_index + 1}"
+                    if plot_type == "1D":
+                        if plot.x_name in rel_axes:
+                            plot_group["_plot_data_axes"] = h5py.SoftLink(
+                                rel_axes[plot.x_name]
+                            )
+                            plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
+                        elif any(key in plot.x_name for key in rel_axes.keys()):
+                            print(
+                                "Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression"
+                            )
+                            import numexpr as ne
 
+                            data_context = base_namespace.copy()
+                            for key, path_val in rel_axes.items():
+                                last_path_element = path_val.split("/")[-1]
+                                data_context[last_path_element] = self._h5_output_file[
+                                    path_val
+                                ][()]
+                            cleaned_x = plot.x_name.replace(
+                                "np.", ""
+                            )  # remove np. to make it compatible with numexpr
+                            try:
+                                evaluated_data = ne.evaluate(
+                                    cleaned_x, local_dict=data_context
+                                )
+                            except ValueError as e:
+                                print(
+                                    f"Error evaluating expression with numexpr: {e}\nFalling back to asteval for more complex expressions, but this might be slower."
+                                )
+                                from asteval import Interpreter
+
+                                aeval = Interpreter()
+                                aeval.symtable = data_context
+                                evaluated_data = aeval.eval(cleaned_x)
+                            plot_group["_plot_data_axes"] = evaluated_data
+                            plot_group["_plot_data_axes"].attrs["long_name"] = plot.x_name
+                        else:
+                            print(
+                                f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol."
+                            )
+                        y_count = 0
+                        for y in plot.y_names:
+                            if y_count == 0:
+                                if y in rel_signals:
+                                    plot_group["_plot_data_signal"] = h5py.SoftLink(
+                                        rel_signals[y]
+                                    )
+                                    plot_group["_plot_data_signal"].attrs["long_name"] = y
+                                    plot_group["_plot_data_signal"].attrs[
+                                        "y_axes_index"
+                                    ] = plot.y_axes[plot.eva.exchange_aliases(y)]
+                                elif any(key in y for key in rel_signals.keys()):
+                                    print(
+                                        "Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression"
+                                    )
+                                    import numexpr as ne
+
+                                    data_context = base_namespace.copy()
+                                    for key, path_val in rel_signals.items():
+                                        last_path_element = path_val.split("/")[-1]
+                                        data_context[last_path_element] = (
+                                            self._h5_output_file[path_val][()]
+                                        )
+                                    cleaned_y = y.replace(
+                                        "np.", ""
+                                    )  # remove np. to make it compatible with numexpr
+                                    try:
+                                        evaluated_data = ne.evaluate(
+                                            cleaned_y, local_dict=data_context
+                                        )
+                                    except ValueError as e:
+                                        print(
+                                            f"Error evaluating expression with numexpr: {e}\nFalling back to asteval for more complex expressions, but this might be slower."
+                                        )
+                                        from asteval import Interpreter
+
+                                        aeval = Interpreter()
+                                        aeval.symtable = data_context
+                                        evaluated_data = aeval.eval(cleaned_y)
+                                    plot_group["_plot_data_signal"] = evaluated_data
+                                    plot_group["_plot_data_signal"].attrs["long_name"] = y
+                                    plot_group["_plot_data_signal"].attrs[
+                                        "y_axes_index"
+                                    ] = plot.y_axes[plot.eva.exchange_aliases(y)]
+                                else:
+                                    print(
+                                        f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol."
+                                    )
+                            else:
+                                if y in rel_signals:
+                                    plot_group[f"_plot_data_signal_{y_count}"] = (
+                                        h5py.SoftLink(rel_signals[y])
+                                    )
+                                    plot_group[f"_plot_data_signal_{y_count}"].attrs[
+                                        "long_name"
+                                    ] = y
+                                    plot_group[f"_plot_data_signal_{y_count}"].attrs[
+                                        "y_axes_index"
+                                    ] = plot.y_axes[plot.eva.exchange_aliases(y)]
+                                elif any(key in y for key in rel_signals.keys()):
+                                    print(
+                                        "y data name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression"
+                                    )
+                                    import numexpr as ne
+
+                                    data_context = base_namespace.copy()
+                                    for key, path_val in rel_signals.items():
+                                        last_path_element = path_val.split("/")[-1]
+                                        data_context[last_path_element] = (
+                                            self._h5_output_file[path_val][()]
+                                        )
+                                    cleaned_y = y.replace(
+                                        "np.", ""
+                                    )  # remove np. to make it compatible with numexpr
+                                    try:
+                                        evaluated_data = ne.evaluate(
+                                            cleaned_y, local_dict=data_context
+                                        )
+                                    except ValueError as e:
+                                        print(
+                                            f"Error evaluating expression with numexpr: {e}\nFalling back to asteval for more complex expressions, but this might be slower."
+                                        )
+                                        from asteval import Interpreter
+
+                                        aeval = Interpreter()
+                                        aeval.symtable = data_context
+                                        evaluated_data = aeval.eval(cleaned_y)
+                                    plot_group[f"_plot_data_signal_{y_count}"] = (
+                                        evaluated_data
+                                    )
+                                    plot_group[f"_plot_data_signal_{y_count}"].attrs[
+                                        "long_name"
+                                    ] = y
+                                    plot_group[f"_plot_data_signal_{y_count}"].attrs[
+                                        "y_axes_index"
+                                    ] = plot.y_axes[plot.eva.exchange_aliases(y)]
+                                else:
+                                    print(
+                                        f"The y data {y} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol."
+                                    )
+                            y_count += 1
+                        plot_group.attrs["axes"] = "_plot_data_axes"
+                        plot_group.attrs["signal"] = "_plot_data_signal"
+                        # Add a list of auxiliary signals if there are more than one y data
+                        if y_count > 1:
+                            aux_signals = []
+                            for i in range(1, y_count):
+                                aux_signals.append(f"_plot_data_signal_{i}")
+                            plot_group.attrs["auxiliary_signals"] = aux_signals
+
+                    elif plot_type == "2D":
+                        if plot.x_name in rel_axes:
+                            plot_group["_plot_data_axes_0"] = h5py.SoftLink(
+                                rel_axes[plot.x_name]
+                            )
+                            plot_group["_plot_data_axes_0"].attrs["long_name"] = plot.x_name
+                        elif any(key in plot.x_name for key in rel_axes.keys()):
+                            print(
+                                "X Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression"
+                            )
+                            import numexpr as ne
+
+                            data_context = base_namespace.copy()
+                            for key, path_val in rel_axes.items():
+                                last_path_element = path_val.split("/")[-1]
+                                data_context[last_path_element] = self._h5_output_file[
+                                    path_val
+                                ][()]
+                            cleaned_x = plot.x_name.replace(
+                                "np.", ""
+                            )  # remove np. to make it compatible with numexpr
+                            try:
+                                evaluated_data = ne.evaluate(
+                                    cleaned_x, local_dict=data_context
+                                )
+                            except ValueError as e:
+                                print(
+                                    f"Error evaluating expression with numexpr: {e}\nFalling back to asteval for more complex expressions, but this might be slower."
+                                )
+                                from asteval import Interpreter
+
+                                aeval = Interpreter()
+                                aeval.symtable = data_context
+                                evaluated_data = aeval.eval(cleaned_x)
+                            plot_group["_plot_data_axes_0"] = evaluated_data
+                            plot_group["_plot_data_axes_0"].attrs["long_name"] = plot.x_name
+                        else:
+                            print(
+                                f"The x data {plot.x_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol."
+                            )
+                        if plot.y_name in rel_axes:
+                            plot_group["_plot_data_axes_1"] = h5py.SoftLink(
+                                rel_axes[plot.y_name]
+                            )
+                            plot_group["_plot_data_axes_1"].attrs["long_name"] = plot.y_name
+                        elif any(key in plot.y_name for key in rel_axes.keys()):
+                            print(
+                                "Y Axes name and dataset name do not match, likely due to arithmetic operation. Evaluating the axes expression"
+                            )
+                            import numexpr as ne
+
+                            data_context = base_namespace.copy()
+                            for key, path_val in rel_axes.items():
+                                last_path_element = path_val.split("/")[-1]
+                                data_context[last_path_element] = self._h5_output_file[
+                                    path_val
+                                ][()]
+                            cleaned_y = plot.y_name.replace(
+                                "np.", ""
+                            )  # remove np. to make it compatible with numexpr
+                            try:
+                                evaluated_data = ne.evaluate(
+                                    cleaned_y, local_dict=data_context
+                                )
+                            except ValueError as e:
+                                print(
+                                    f"Error evaluating expression with numexpr: {e}\nFalling back to asteval for more complex expressions, but this might be slower."
+                                )
+                                from asteval import Interpreter
+
+                                aeval = Interpreter()
+                                aeval.symtable = data_context
+                                evaluated_data = aeval.eval(cleaned_y)
+                            plot_group["_plot_data_axes_1"] = evaluated_data
+                            plot_group["_plot_data_axes_1"].attrs["long_name"] = plot.y_name
+                        else:
+                            print(
+                                f"The y data {plot.y_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol."
+                            )
+                        if plot.z_name in rel_signals:
+                            plot_group["_plot_data_signal"] = h5py.SoftLink(
+                                rel_signals[plot.z_name]
+                            )
+                            plot_group["_plot_data_signal"].attrs["long_name"] = plot.z_name
+                        elif any(key in plot.z_name for key in rel_signals.keys()):
+                            print(
+                                "Signal name and dataset name do not match, likely due to arithmetic operation. Evaluating the signal expression"
+                            )
+                            import numexpr as ne
+
+                            data_context = base_namespace.copy()
+                            for key, path_val in rel_signals.items():
+                                last_path_element = path_val.split("/")[-1]
+                                data_context[last_path_element] = self._h5_output_file[
+                                    path_val
+                                ][()]
+                            cleaned_z = plot.z_name.replace(
+                                "np.", ""
+                            )  # remove np. to make it compatible with numexpr
+                            try:
+                                evaluated_data = ne.evaluate(
+                                    cleaned_z, local_dict=data_context
+                                )
+                            except ValueError as e:
+                                print(
+                                    f"Error evaluating expression with numexpr: {e}\nFalling back to asteval for more complex expressions, but this might be slower."
+                                )
+                                from asteval import Interpreter
+
+                                aeval = Interpreter()
+                                aeval.symtable = data_context
+                                evaluated_data = aeval.eval(cleaned_z)
+                            plot_group["_plot_data_signal"] = evaluated_data
+                            plot_group["_plot_data_signal"].attrs["long_name"] = plot.z_name
+                        else:
+                            print(
+                                f"The z data {plot.z_name} you want to plot could not be found in the data file.\nMake sure you actually read this data in your protocol."
+                            )
+                        plot_group.attrs["axes"] = [
+                            "_plot_data_axes_0",
+                            "_plot_data_axes_1",
+                        ]
+                        plot_group.attrs["signal"] = "_plot_data_signal"
+
+                if not hasattr(plot, "liveFits") or not plot.liveFits:
+                    continue
+                fit_group = plot_group.require_group("fit")
+                for fit_index, fit in enumerate(plot.liveFits):
+                    if not fit.results:
+                        continue
+                    fg = fit_group.require_group(fit.name)
+                    param_names = []
+                    param_values = []
+                    covars = []
+                    timestamps = []
+                    for t, res in fit.results.items():
+                        timestamps.append(float(t))
+                        if res.covar is None:
+                            covar = np.ones((len(res.best_values), len(res.best_values)))
+                            covar *= np.nan
+                        else:
+                            covar = res.covar
+                        covars.append(covar)
+                        if not param_names:
+                            param_names = res.model.param_names
+                        param_values.append(res.params)
+                    fg.attrs["param_names"] = param_names
+                    timestamps, covars, param_values = sort_by_list(
+                        timestamps, [covars, param_values]
+                    )
+                    # isos = []
+                    # for t in timestamps:
+                    #     isos.append(timestamp_to_ISO8601(t))
+                    fg["time"] = timestamps
+                    since = np.array(timestamps)
+                    since -= self._start_time
+                    fg["ElapsedTime"] = since
+                    fg["covariance"] = covars
+                    fg["covariance"].attrs["parameters"] = param_names[: len(covars[0])]
+                    param_values = get_param_dict(param_values)
+                    for p, v in param_values.items():
+                        fg[p] = v
+                    fg.attrs["y_axes_index"] = plot.y_axes[fit.y]
+                    fg.attrs["plot_metadata"] = json.dumps(plot.fits[fit_index])
+        except Exception as e:
+            print(f"Error while creating plots: {e}\nContinuing without adding plots to data.")
         if self.do_nexus_output:
             self.make_nexus_structure()
         else:
@@ -1473,9 +1715,9 @@ class Serializer(event_model.DocumentRouter):
                             f"/{self._entry_name}/instruments/{dev}/ELN-instrument-id",
                             f"/{nexus_name}/{dev}/identifier_ELN_instrument",
                         )
-                        instrument["identifier_ELN_instrument"].attrs[
-                            "type"
-                        ] = "laboratory specific"
+                        instrument["identifier_ELN_instrument"].attrs["type"] = (
+                            "laboratory specific"
+                        )
                         instrument["identifier_ELN_instrument"].attrs["custom"] = True
                 elif child == "name":
                     self._h5_output_file.copy(
@@ -1518,13 +1760,13 @@ class Serializer(event_model.DocumentRouter):
                             environment[sensor_name][sensor_child] = h5py.SoftLink(
                                 f"/{self._entry_name}/instruments/{dev}/sensors/{sensor_name}/{sensor_child}"
                             )
-                        environment[sensor_name][
-                            "calibration_time"
-                        ] = "1970-01-01T01:00:00+01:00"  # has to be NX_DATE_TIME, not really known
+                        environment[sensor_name]["calibration_time"] = (
+                            "1970-01-01T01:00:00+01:00"  # has to be NX_DATE_TIME, not really known
+                        )
                         environment[sensor_name]["run_control"] = ""
-                        environment[sensor_name]["run_control"].attrs[
-                            "description"
-                        ] = ""
+                        environment[sensor_name]["run_control"].attrs["description"] = (
+                            ""
+                        )
                         environment[sensor_name]["value"] = 0.0
                         sensors_list.append(sensor_name)
                 elif child == "outputs":
