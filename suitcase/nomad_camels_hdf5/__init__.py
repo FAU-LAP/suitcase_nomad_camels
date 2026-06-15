@@ -1660,13 +1660,13 @@ class Serializer(event_model.DocumentRouter):
         process["program"].attrs["version"] = version
         process["program"].attrs["program_url"] = program_url
         process.create_group("python_environment")
-        process["python_environment"].attrs["NX_class"] = "NXparamerters"
+        process["python_environment"].attrs["NX_class"] = "NXparameters"
         for package in self._entry["program"]["python_environment"]:
             process["python_environment"][package] = h5py.SoftLink(
                 f"/{self._entry_name}/program/python_environment/{package}"
             )
         process.create_group("python")
-        process["python"].attrs["NX_class"] = "NXparamerters"
+        process["python"].attrs["NX_class"] = "NXparameters"
         process["python"]["python_version"] = self._entry["program"][
             "python_environment"
         ].attrs["python_version"]
